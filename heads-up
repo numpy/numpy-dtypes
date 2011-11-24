@@ -1,0 +1,201 @@
+#!/usr/bin/env python
+
+from __future__ import division
+import re
+from numpy import *
+
+cards = '23456789TJQKA'
+nonpairs = [cards[i]+cards[j] for i in xrange(len(cards)) for j in xrange(i)]
+hands = [c+c for c in cards]+[h+'s' for h in nonpairs]+[h+'o' for h in nonpairs]
+assert len(hands)==13+13*12
+hand_id = dict((h,i) for (i,h) in enumerate(hands))
+
+# Load win probabilities of each hand vs. each other hand
+def parse_preflop_matchups():
+    pattern = re.compile(r'^(\w+)\s+vs\.\s+(\w+)\s+:\s+([\d.]+)\s+vs\.\s+([\d.]+)\s+$')
+    win = -ones((len(hands),)*2)
+    for line in open('preflop-matchups.txt'):
+        m = pattern.match(line)
+        assert m
+        h0 = hand_id[m.group(1)]
+        h1 = hand_id[m.group(2)]
+        w0 = float(m.group(3))
+        w1 = float(m.group(4))
+        assert abs(w0+w1-1)<1e-5
+        win[h0,h1] = w0
+        win[h1,h0] = 1-w0
+    i = arange(len(hands))
+    win[i,i] = .5
+    assert all(0<=win) and all(win<=1)
+    assert all(abs(win+win.T-1)<=1e-10)
+    return win
+win = parse_preflop_matchups()
+
+# Build a map from pairs of cards (represented as 4*id+suit) to hand ids
+def compute_cards_to_hand():
+    suits = xrange(4)
+    cards_to_hand = -ones((4*len(cards),)*2,dtype=int)
+    for c0 in xrange(len(cards)):
+        h = hand_id[cards[c0]*2]
+        for s0 in suits:
+            for s1 in suits:
+                if s0!=s1:
+                    cards_to_hand[4*c0+s0,4*c0+s1] = h
+        for c1 in xrange(c0):
+            h = cards[c0]+cards[c1]
+            hs = hand_id[h+'s']
+            ho = hand_id[h+'o']
+            for s0 in suits:
+                cs0 = 4*c0+s0
+                for s1 in suits:
+                    cs1 = 4*c1+s1
+                    cards_to_hand[cs0,cs1] = cards_to_hand[cs1,cs0] = hs if s0==s1 else ho
+    return cards_to_hand
+cards_to_hand = compute_cards_to_hand()
+assert sum(cards_to_hand<0)==52
+
+def hand_probabilities():
+    # Count how many times h occurs in cards_to_hand for each h
+    def prob(x):
+        prob = empty(len(hands))
+        for h in xrange(len(hands)):
+            prob[h] = sum(x==h)
+        return prob/sum(prob)
+    hand_prob = prob(cards_to_hand)
+
+    i = xrange(len(cards_to_hand))
+    hand_to_cards = dict((cards_to_hand[c,d],(c,d)) for c in i for d in i)
+
+    # Compute conditional probabilities of each hand given each other hand
+    cond_hand_prob = empty((len(hands),)*2)
+    for h in xrange(len(hands)):
+        cs = hand_to_cards[h]
+        remaining = array([i for i in xrange(13*4) if i not in cs])
+        cond_hand_prob[h] = prob(cards_to_hand[remaining.reshape(-1,1),remaining.reshape(1,-1)])
+    return hand_prob,cond_hand_prob
+hand_prob,cond_hand_prob = hand_probabilities()
+hand_hand_prob = hand_prob.reshape(-1,1)*cond_hand_prob
+assert allclose(sum(hand_hand_prob),1)
+assert allclose(hand_hand_prob,hand_hand_prob.T)
+
+# Check all interesting conditional probabilities
+assert allclose(hand_prob[hand_id['AA']],1/13*3/51)
+assert allclose(hand_prob[hand_id['AKs']],2/13/51)
+assert allclose(hand_prob[hand_id['AKo']],2/13*3/51)
+assert allclose(cond_hand_prob[hand_id['AA'],hand_id['AA']],2/50*1/49)
+assert allclose(cond_hand_prob[hand_id['AA'],hand_id['KK']],4/50*3/49)
+assert allclose(cond_hand_prob[hand_id['AA'],hand_id['AKs']],2*2/50/49)
+assert allclose(cond_hand_prob[hand_id['AA'],hand_id['AKo']],2*2/50*3/49)
+assert allclose(cond_hand_prob[hand_id['AA'],hand_id['KQs']],2*4/50/49)
+assert allclose(cond_hand_prob[hand_id['AA'],hand_id['KQo']],2*4/50*3/49)
+assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AKs']],2*3/50/49)
+assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AKo']],2*3/50*2/49)
+assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AQs']],2*3/50/49)
+assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AQo']],2*3/50*3/49)
+assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['QJs']],2*4/50/49)
+assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['QJo']],2*4/50*3/49)
+assert allclose(cond_hand_prob[hand_id['AKo'],hand_id['AKo']],2/50*3/49+2*2/50*2/49)
+assert allclose(cond_hand_prob[hand_id['AKo'],hand_id['AQo']],2*3/50*3/49)
+assert allclose(cond_hand_prob[hand_id['AKo'],hand_id['QJo']],2*4/50*3/49)
+
+# Switch to deterministic outcomes
+if 0:
+    outcome = dot(win,hand_prob)
+    win[...] = outcome.reshape(-1,1)>outcome.reshape(1,-1)
+    i = arange(len(outcome))
+    win[i,i] = .5
+    assert all(0<=win) and all(win<=1)
+    assert all(abs(win+win.T-1)<=1e-10)
+    rank = sorted(i,key=lambda i:outcome[i])
+    print 'hand rank = %s'%(' '.join(hands[i] for i in rank))
+
+def check_payoff_slow(bet,alice,bob,n=10000):
+    '''Warning: This routine is slightly inaccurate, since it ignores the varying probability of
+    overlapping suits of hands'''
+    count = 0
+    payoff = 0
+    for _ in xrange(n):
+        cs = random.randint(len(cards_to_hand),size=4)
+        if sum(cs.reshape(-1,1)==cs.reshape(1,-1))!=4:
+            continue
+        count += 1
+        ha = cards_to_hand[cs[0],cs[1]]
+        hb = cards_to_hand[cs[2],cs[3]]
+        if alice[ha]:
+            if bob[hb]:
+                payoff += (1+bet)*(2*win[ha,hb]-1)
+            else:
+                payoff += 1
+    return payoff/count
+
+def check_payoff_medium(bet,alice,bob):
+    payoff = 0
+    for ha in xrange(len(hands)):
+        for hb in xrange(len(hands)):
+            prob = hand_hand_prob[ha,hb]
+            if alice[ha]:
+                if bob[hb]:
+                    payoff += (1+bet)*(2*win[ha,hb]-1)*prob
+                else:
+                    payoff += prob
+    return payoff
+
+def if_(c,a,b):
+    return choose(c,[b,a])
+
+def check_payoff(bet,alice,bob):
+    return sum(hand_hand_prob*alice.reshape(-1,1)*if_(bob.reshape(1,-1),(1+bet)*(2*win-1),1))
+
+def bob_payoff(bet,alice,bob):
+    return sum(hand_hand_prob*alice.reshape(-1,1)*if_(bob.reshape(1,-1),(1+bet)*(2*win-1),1))
+
+def always_call():
+    alice = ones(len(hands),dtype=int)
+    bob = ones(len(hands),dtype=int)
+    return alice,bob
+
+# Converge to heads up Nash equilibrium from an initial strategy guess
+def nash_equilibrium(bet,(alice,bob)=always_call(),n=1000):
+    alice = alice[...]
+    bob = bob[...]
+    bounds = [-inf,inf]
+    # Iterate until convergence
+    while 1:
+        done = 1
+        # Make at most one change to Alice's strategy
+        payoff = sum(cond_hand_prob*((1-bob.reshape(1,-1)) + (1+bet)*bob.reshape(1,-1)*(2*win-1)), axis=1)
+        equity = dot(hand_prob,alice*payoff)
+        bounds[1] = min(bounds[1],dot(hand_prob,maximum(0,payoff))) # Bob can hold Alice to below this
+        print 'Alice equity = %g'%equity
+        print 'Equity range = %g %g'%(bounds[0],bounds[1])
+        error = payoff*((payoff>0)*(1-alice) - (payoff<0)*alice)
+        h = argmax(error)
+        if error[h]:
+            alice[h] = 1-alice[h]
+            print 'Alice should%s call with %s'%(('' if alice[h] else "n't"),hands[h])
+            done = 0
+        # Make at most one change to Bob's strategy
+        hand_hand_call_prob = alice.reshape(1,-1)*hand_hand_prob
+        inv_cond_hand_prob = hand_hand_call_prob / hand_hand_call_prob.sum(axis=1).reshape(-1,1)
+        assert allclose(inv_cond_hand_prob.sum(axis=1),1)
+        payoff = sum(inv_cond_hand_prob*((2+bet)*win-bet*win.T), axis=1)
+        error = payoff*((payoff>0)*(1-bob) - (payoff<0)*bob)
+        bounds[0] = max(bounds[0],check_payoff(bet,alice,payoff>0)) # Alice can hold Bob to above this
+        h = argmax(error)
+        if error[h]:
+            bob[h] = 1-bob[h]
+            print 'Bob should%s call with %s'%(('' if bob[h] else "n't"),hands[h])
+            done = 0
+        # Are we done?
+        if done:
+            break
+    # Print strategies
+    print 'Alice calls with %d hands: %s'%(sum(alice),' '.join(hands[i] for i in nonzero(alice)[0]))
+    print 'Bob calls with %d hands: %s'%(sum(bob),' '.join(hands[i] for i in nonzero(bob)[0]))
+    return alice,bob
+
+bet = 0
+alice,bob = nash_equilibrium(bet)
+print "Alice's approximate payoff = %g"%check_payoff_slow(bet,alice,bob)
+print "Alice's exact payoff = %g"%check_payoff_medium(bet,alice,bob)
+print "Alice's exact payoff = %g"%check_payoff(bet,alice,bob)

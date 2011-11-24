@@ -3,6 +3,13 @@
 from __future__ import division
 import re
 from numpy import *
+import optparse
+
+usage = "usage: %prog [-c] [-C <dir>] [args...]"
+parser = optparse.OptionParser(usage)
+parser.add_option('-b','--bet',default=0.,type=float,help='set a fixed bet level')
+options,args = parser.parse_args()
+if len(args): parser.error('zero arguments expected')
 
 cards = '23456789TJQKA'
 nonpairs = [cards[i]+cards[j] for i in xrange(len(cards)) for j in xrange(i)]
@@ -194,7 +201,7 @@ def nash_equilibrium(bet,(alice,bob)=always_call(),n=1000):
     print 'Bob calls with %d hands: %s'%(sum(bob),' '.join(hands[i] for i in nonzero(bob)[0]))
     return alice,bob
 
-bet = 0
+bet = options.bet
 alice,bob = nash_equilibrium(bet)
 print "Alice's approximate payoff = %g"%check_payoff_slow(bet,alice,bob)
 print "Alice's exact payoff = %g"%check_payoff_medium(bet,alice,bob)

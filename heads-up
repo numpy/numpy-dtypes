@@ -207,6 +207,8 @@ def zero_sum_nash_equilibrium(payoff):
 
 # Converge to heads up Nash equilibrium from an initial strategy guess
 def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
+    alice = alice.astype(bool)
+    bob = bob.astype(bool)
     bounds = [-inf,inf]
     # Iterate until we detect looping
     hashes = set()
@@ -262,22 +264,37 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
             call = s[k]
             print '  %d hands: %s'%(sum(call),' '.join(hands[i] for i in nonzero(call)[0]))
     # Compute exact Nash equilibrium matrix
-    payoff = inf*ones((len(strategies),)*2)
-    for a in xrange(len(strategies)):
-        for b in xrange(len(strategies)):
-            payoff[a,b] = check_payoff(bet,strategies[a][0],strategies[b][1])
-    nash,alice,bob = zero_sum_nash_equilibrium(payoff)
-    alice = sum(a*s[0] for a,s in zip(alice,strategies))
-    bob = sum(b*s[1] for b,s in zip(bob,strategies))
+    alices = [s[0] for s in strategies]
+    bobs = [s[1] for s in strategies]
+    while 1:
+        # Compute Nash equilibrium ranging over our current list of Alice's and Bob's strategies
+        payoff = empty((len(alices),len(bobs)))
+        for a,alice in enumerate(alices):
+            for b,bob in enumerate(bobs):
+                payoff[a,b] = check_payoff(bet,alice,bob)
+        nash,alice,bob = zero_sum_nash_equilibrium(payoff)
+        alice = sum(a*s for a,s in zip(alice,alices))
+        bob = sum(b*s for b,s in zip(bob,bobs))
+        # Determine Alice's and Bob's new optimal strategies, and add them to our lists if necessary
+        done = 1
+        opt_alice = alice_payoff(bet,bob)>0
+        if ahash(opt_alice) not in map(ahash,alices):
+            alices.append(opt_alice)
+            done = 0
+        opt_bob = bob_payoff(bet,alice)>0
+        if ahash(opt_bob) not in map(ahash,bobs):
+            bobs.append(opt_bob)
+            done = 0
+        if done:
+            break
     # Verify that we've found the Nash equilibrium
     equity = check_payoff(bet,alice,bob)
-    atol = 3e-4
-    assert allclose(equity,nash,atol=atol)
+    assert allclose(equity,nash)
     assert bounds[0]-1e10<=equity<=bounds[1]+1e10
     print 'first error = %g'%(check_payoff(bet,alice,bob_payoff(bet,alice)>0)-equity)
-    assert allclose(equity,check_payoff(bet,alice,bob_payoff(bet,alice)>0),atol=atol)
+    assert allclose(equity,check_payoff(bet,alice,bob_payoff(bet,alice)>0))
     print 'second error = %g'%(check_payoff(bet,alice_payoff(bet,bob)>0,bob)-equity)
-    assert allclose(equity,check_payoff(bet,alice_payoff(bet,bob)>0,bob),atol=atol)
+    assert allclose(equity,check_payoff(bet,alice_payoff(bet,bob)>0,bob))
     return equity,alice,bob
 
 if not options.plot:

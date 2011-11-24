@@ -295,6 +295,14 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
     assert allclose(equity,check_payoff(bet,alice,bob_payoff(bet,alice)>0))
     print 'second error = %g'%(check_payoff(bet,alice_payoff(bet,bob)>0,bob)-equity)
     assert allclose(equity,check_payoff(bet,alice_payoff(bet,bob)>0,bob))
+    # Print out nice results
+    if verbose:
+        def str_strategy(strat,payoff):
+            order = sorted(arange(len(strat)),key=lambda i:-payoff[i])
+            return ' '.join(('' if allclose(strat[i],1) else '%g*'%strat[i])+hands[i] for i in order if strat[i]>0)
+        print
+        print 'Alice: %d hands, %s'%(sum(alice>0),str_strategy(alice,alice_payoff(bet,bob)))
+        print 'Bob: %d hands, %s'%(sum(bob>0),str_strategy(bob,bob_payoff(bet,alice)))
     return equity,alice,bob
 
 if not options.plot:

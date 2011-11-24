@@ -1,0 +1,295 @@
+Consider a simple two-player betting game with the following rules:
+
+  1. Bob posts a $1 blind.
+  2. Both players are dealt a (hidden) real number in [0,1].
+  3. Alice either folds or raises B >= 0.  If P1 folds, player 2 keeps the blind.
+  4. Bob either calls B or folds.  If P2 folds, player 1 gets the blind.
+  5. If neither player folds, the player with the higher number wins the total bet B+1.
+
+Alice's strategy is a probability distribution over {fold} union R^+ for each hand in [0,1].
+Let f(x) be the probability of folding given hand x, and p(x,b) the probability density of betting b given hand x.
+Bob's strategy is to call if y > m(b) and fold if y < m(b), for a threshold function m : R^+ -> [0,1]
+
+a probability of calling q(y,b) given each hand and bet.  We have
+
+  f(x), p(x,b) >= 0
+  f(x) + int_b p(x,b) = 1
+  0 <= m(b) <= 1
+
+Define
+
+  q(y,b) = 1 if y > m(b)
+           0 if y < m(b)
+
+  Q(x,b) = int_{y<x} q(y,b)
+
+We have
+
+  Q(x,b) = 0 if x < m(b)
+  Q(x,b) = x - m(b) if x > m(b)
+
+  Q(x,b) = max(0, x-m(b))
+
+  int_{y>x} q(y,b) = Q(1,b) - Q(x,b)
+                   = 1 - m(b) - Q(x,b)
+
+Given hands x,y, the expected outcome for player 1 is
+
+  R(x,y) = int_b p(x,b) (1 + b q(y,b)) db      if x > y
+           int_b p(x,b) (1 - (2+b) q(y,b)) db  if x < y
+
+Thus the expected outcome for player 1 given hand x is
+
+  A(x) = int_[0,1] R(x,y) dy
+       =   int_{y<x} int_b p(x,b) (1 + b q(y,b)) db dy
+         + int_{y>x} int_b p(x,b) (1 - (2+b) q(y,b)) db dy
+
+We have
+
+  A(x) = int_[0,1] R(x,y) dy
+       =   int_b p(x,b) (x + b Q(x,b)) db
+         + int_b p(x,b) (1-x - (2+b) (1 - m(b) - Q(x,b))) db
+       = int_b p(x,b) (1 + b Q(x,b) - (2+b) (1 - m(b) - Q(x,b))) db
+       = int_b p(x,b) (1 + b Q(x,b) - (2+b) + (2+b) m(b) + (2+b) Q(x,b)) db
+       = int_b p(x,b) ((2+b) m(b) - (1+b) + 2(1+b) Q(x,b)) db
+       = int_b p(x,b) ((2+b) m(b) - (1+b) + 2(1+b) max(0, x-m(b))) db
+       = int_b p(x,b) A(x,b) db
+  A(x,b) = (2+b) m(b) - (1+b) + 2(1+b) max(0, x-m(b))
+
+The special cases x = 0 and x = 1 check out:
+
+  A(1,b) = (2+b) m(b) - (1+b) + 2(1+b) (1-m(b))
+         = (2+b) m(b) - 1 - b + 2 + 2b - (2+2b) m(b)
+         = 1+b - b m(b)
+         = 1 + b (1 - m(b))
+  A(0,b) = (2+b) m(b) - (1+b)
+         = m(b) - (1+b) (1-m(b))
+
+If q is fixed, an optimal strategy for player 1 is:
+
+  Given x, bet b = argmax_b A(x,b) if max_b A(x,b) > 0, and fold otherwise.
+
+with outcome
+
+  Ao = int_x max(0,max_b A(x,b)) dx
+
+Similarly the expected outcome for player 2 given bet b is
+
+  B(b) = -1 + (2+b) Pr(x,m(b) < y | b) - b Pr(m(b) < y < x | b)
+
+The expected outcome given hand y and bet b is
+
+  B(y,b) = -1 + q(y,b) ((2+b)Pr(x < y | b) - b Pr(x > y | b))
+         = -1 + q(y,b) ((2+b)Pr(x < y | b) - b (1 - Pr(x < y | b)))
+         = -1 + q(y,b) (-b + (2+2b)Pr(x < y | b))
+
+and the optimal solution is q(y,b) = 0 or 1, with
+
+  q(y,b) = 1 iff (-b + (2+2b)Pr(x < y | b)) > 0
+             iff (2+2b)Pr(x < y | b) > b
+             iff Pr(x < y | b) > b/(2+2b)
+
+The switch occurs exactly at y = m(b), so we have
+
+  Pr(x < m(b) | b) = b/(2+2b)
+
+By Bayes rule,
+
+  Pr(x < y | b) = Pr(b | x < y) Pr(x < y) / Pr(b)
+                = (int_{x<y} p(x,b) dx / y) y / (int_x p(x,b) dx)
+                = (int_{x<y} p(x,b) dx) / (int_x p(x,b) dx)
+
+Define P(y,b) = int_{x<y} p(x,b) dx, so that
+
+  Pr(x < y | b) = P(y,b) / P(1,b)
+  P(m(b),b) / P(1,b) = b/(2+2b)
+  P(m(b),b) = P(1,b) b/(2+2b)
+
+My vague feeling is that at a Nash equilibrium, the function A(x,b) should be constant
+over some range.  However, this might be completely wrong.  Let's assume m(b) is a
+smooth function of b except possibly when m(b) = 0 or 1.  Then at b = argmax_b A(x,b),
+we must have either
+
+  m(b) = 0, 1, or x
+
+or
+
+  0 = A(x,b)_b = (2+b) m'(b) + m(b) - 1 - (2+2b) (x > m(b)) m'(b) + 2 max(0,x-m(b))
+
+if x < m(b), this is
+
+  (2+b) m'(b) + m(b) = 1
+
+If x > m(b), this is
+
+  -b m'(b) - m(b) - 1 + 2x = 0
+  b m'(b) + m(b) = 2x - 1
+
+Let's see what happens to A(x,b) as b -> inf.  We have
+
+  A(x,b) = (2+b) m(b) - (1+b) + 2(1+b) max(0, x-m(b))
+
+Assume for the moment that m(b) is increasing; Bob calls larger bets with fewer
+hands.  This is probably true for any Nash equilibrium.  Then m(b) has a limit m(inf)
+as b -> inf, with m(inf) in [0,1].  If m(inf) < 1, then Alice can achieve unbounded
+payoff by folding if x < m(inf) and betting a huge amount if x > m(inf).  Thus m(inf) = 1.
+On the other end, m(0) = 0, since it costs nothing to call.  Can we say anything in
+between?  Well, we know that 0 <= Ao <= 1, since Alice achieves Ao = 0 by never calling,
+and Bob achieves Ao = 1 by never calling.  Consider the strategy where Alice always bets
+b.  The outcome for Alice is
+
+  Ao = 1 Pr(y < m(b)) - (1+b) Pr(x,m(b) < y) + (1+b) Pr(m(b) < y < x)
+     = m(b) + (1+b) int_x (Pr(m(b) < y < x) - Pr(x,m(b) < y))
+     = m(b) + (1+b) int_x (max(0,x-m(b)) - (1-max(x,m(b))))
+     = m(b) + (1+b) int_x (max(0,x-m(b)) - 1 + max(x,m(b)))
+     = m(b) + (1+b) int_{x<m(b)} (-1 + m(b)) + (1+b) int_{x>m(b)} (x - m(b) - 1 + x)
+     = m(b) + (1+b) m(b) (-1 + m(b)) + (1+b) int_{x>m(b)} (2x - m(b) - 1)
+     = m(b) + (1+b) m(b) (-1 + m(b)) - (1+b) (1 - m(b)) (1 + m(b)) + (1+b) int_{x>m(b)} 2x
+     = m(b) + (1+b) m(b) (-1 + m(b)) - (1+b) (1 - m(b)) (1 + m(b)) + (1+b) (1 - m(b)^2)
+     = m(b) + (1+b) m(b) (-1 + m(b))
+     = m(b) + (1+b) (m(b)^2 - m(b))
+     = m(b) + m(b)^2 - m(b) + b m(b)^2 - b m(b)
+     = m(b)^2 + b m(b)^2 - b m(b)
+     = m(b)^2 + b m(b) (m(b) - 1)
+     < 1
+
+so the always bet b strategy always produces outcomes under 1, and doesn't tell us anything
+about m(b).
+
+-------------------------------------------------------------------------------------------
+
+New facts about Alice.  A(x) is clearly a weakly increasing function of x.  If for some x,
+A(x) > 0, the optimal probability of folding for that x is zero, since folding gives an
+expected outcome of zero.  Moreover, if x' > x, I claim A(x') > A(x).  If not, if A(x') = A(x),
+then for the entire range of nonzero probability bets b we must have m(b) > x'.  But in this
+case, as long as m(b) is continuous, Alice can do strictly better by... Hmm.
+
+Set that aside for now.  I think there's something interesting there, so I'll return to it.
+Back to the folding bit, let F be Alice's folding threshold.
+
+Let's analyze the subset of Alice's strategies where only one bet b is allowed.  I.e., Alice
+folds if x < F, and bets b if x > F.  Bob's strategy is the single number m(b).  We have
+
+  A(F,b) = 0
+         = (2+b) m(b) - (1+b) + 2(1+b) max(0, F-m(b))
+
+Assuming that F is unique, we must have F > m(b).  Indeed, this is obvious, since Alice knows
+m(b), and would never bet if x < m(b).  Thus
+
+  0 = (2+b) m(b) - (1+b) + (2+2b) F - (2+2b) m(b)
+    = -b m(b) - (1+b) + (2+2b) F
+
+On Bob's side, we have
+
+  P(y,b) = int_{x<y} p(x,b) dx = max(0, y-F)
+  P(m(b),b) = P(1,b) b/(2+2b)
+  max(0,m(b)-F) = (1-F) b/(2+2b)
+
+This makes sense only if m(b) > F.  Indeed, this is obvious, since Alice knows F, and would
+never call if y < F.  Thus conclusion is that I've missed a point where randomness is necessary
+to get a Nash equilibrium.  In particular, m(b) = F doesn't make sense, as Bob can do better
+by raising m(b) slightly as long as b > 0.
+
+Let's simplify further to the game where b = 1.  I.e., Alice and Bob are dealt x and y in
+[0,1], Bob posts a $1 blind, and Alice chooses to fold or call.  Bob can and will always
+check.  Alice stands to gain $1 or lose $1, so will call if x > 1/2, achieving
+
+  Ao = 0 Pr(x < 1/2) + 1 Pr(x > y,1/2) - 1 Pr(y > x > 1/2)
+     = Pr(x > y > 1/2) + Pr(x > 1/2 > y) - Pr(y > x > 1/2)
+     = 1/8 + 1/4 - 1/8 = 1/4
+
+For completeness, here's what happens if Alice calls for x > F:
+
+  Ao = 0 Pr(x < F) + 1 Pr(x > y,F) - 1 Pr(y > x > F)
+     = Pr(x > y > F) + Pr(x > F > y) - Pr(y > x > F)
+     = Pr(x > F > y) = F(1-F)
+
+Back to the case where b is fixed > 0.  Dropping our previous assumptions, Alice has a probability
+Pr(bet | x) for each x.  Bob has a probability Pr(call | y) for each y.  Clearly A(x) and B(y), the
+expected outcomes of Alice and Bob given their hands, are weakly increasing functions.  Possibly for
+sufficiently low y, B(y) = -1.  However, if B(y) > -1 for any y, then at the Nash equilibrium we
+must have Pr(call | y) = 1, and the same is true for any y' > y.  Let the infimum of y s.t. B(y) > -1
+be yt.  For y > yt, Bob always calls.  However, for some y < yt, it's possible that Bob folds
+some of the time in order to keep Alice guessing?  Let's prove this isn't necessary.  Say we have a
+Nash equilibrium, and over some range (y0,y1) Bob randomly chooses whether to call or fold.  Since
+Bob's outcome is equivalent to simply folding, B(y) = -1 for y0 < y < y1.  But then Bob's chance of
+winning is independent of y in that range, which means Pr(y0 < x < y1 | A bets) = 0.  However, assuming
+that Pr(bet | x) is an increasing function of x (which should follow from a strategy swapping argument),
+we would then have Pr(x < y1 | A bets) = 0, so Pr(B wins = 0), and B shouldn't be calling.  This seems
+to prove that Bob randomly chooses to call or fold for at most one unique y, which must be y = yt.
+
+Turn now to Alice.  Let xt be the infimum of x s.t. A(x) > 0.  Then if x > xt, at a Nash equilibrium
+Alice must always call.  Assume for the moment that Alice always folds if x < xt.  The outcome is
+
+  Ao = 0 Pr(x < xt) + 1 Pr(x > xt) Pr(y < yt) + (1+b) Pr(x > y,xt and y > yt) - (1+b) Pr(y > x > xt and y > yt)
+     = (1-xt) yt + (1+b) Pr(x > y,xt and y > yt) - (1+b) Pr(y > x > xt and y > yt)
+     = (1-xt) yt + (1+b)[Pr(x > y > xt and y > yt) + Pr(x > xt > y and y > yt) - Pr(y > x > xt and y > yt)]
+     = (1-xt) yt + (1+b)[Pr(x > y > xt,yt) + Pr(x > xt > y > yt) - Pr(y > x > yt,xt) - Pr(y > yt > x > xt)]
+     = (1-xt) yt + (1+b)[Pr(x > xt > y > yt) - Pr(y > yt > x > xt)]
+     = (1-xt) yt + (1+b)[(1-xt) max(0,xt-yt) - (1-yt) max(0,yt-xt)]
+
+If xt < yt, this is
+
+  Ao = (1-xt) yt - (1+b) (1-yt) (yt-xt)
+  Ao_xt = -yt + (1+b) (1-yt) = 0  =>  (-2-b) yt + (1+b) = 0  =>  yt = (1+b)/(2+b)
+  Ao_yt = (1-xt) + (1+b) (yt-xt) - (1+b) (1-yt)
+        = 1 - xt + (2+2b) yt - (1+b) xt - (1+b)
+        = -b + (2+2b) yt - (2+b) xt = 0
+    =>  xt = [(2+2b) yt - b]/(2+b) = [(2+2b) (1+b)/(2+b) - b]/(2+b)
+           = [(2+2b)(1+b) - b(2+b)]/(2+b)^2 = [2+4b+2bb - 2b-bb]/(2+b)^2 = (2+2b+b^2)/(2+b)^2
+
+  xt < yt
+  (2+2b+bb)/(2+b)^2 < (1+b)/(2+b)
+  2+2b+bb < (1+b)(2+b) = 2+3b+bb
+
+which is self consistent.  Hmm, this says that if yt = (1+b)/(2+b), the value of xt doesn't matter for xt < yt.
+If yt < xt, we have
+
+  Ao = (1-xt) yt + (1+b) (1-xt) (xt-yt)
+  Ao_yt = (1-xt) - (1+b) (1-xt) = -b(1-xt)
+
+Bob wants Ao low, so if yt < xt Bob will increase yt at least until yt = xt.  Then Bob will increase yt at least
+a little more, since as yt -> xt+ we have Ao_yt -> (1-xt) (1 - (1+b)) = -b(1-xt).  Thus the Nash equilibrium is
+
+  yt = (1+b)/(2+b) = 1 - 1/(2+b)
+  xt = (2+2b+b^2)/(2+b)^2 = 1 - (2+2b)/(2+b)^2
+
+and
+
+  1-xt = (2+2b)/(2+b)^2
+  1-yt = 1/(2+b) 
+  yt-xt = (1-xt)-(1-yt) = (2+2b)/(2+b)^2 - 1/(2+b) = (2+2b)/(2+b)^2 - (2+b)/(2+b)^2 = b/(2+b)^2
+
+  Ao = (1-xt) yt - (1+b) (1-yt) (yt-xt)
+     = (2+2b)/(2+b)^2 (1+b)/(2+b) - (1+b)/(2+b) b/(2+b)^2
+     = ((2+2b)(1+b) - (1+b)b)/(2+b)^3
+     = (2+3b+b^2 - b - b^2)/(2+b)^3
+     = (2+2b)/(2+b)^3
+
+  Ao_b = 2/(2+b)^3 - 3(2+2b)/(2+b)^4
+       = (4+2b)/(2+b)^4 - (6+6b)/(2+b)^4
+       = -(2+4b)/(2+b)^4
+
+-------------------------------------------------------------------------
+
+With the fixed b result done, I'm much more confident that the threshold results are true.  Namely, we have
+thresholds xt for Alice and yt(b) = m(b) for Bob below which they unconditionally fold.  Above, Bob unconditionally
+calls, and Alice unconditionally bets but may (probably) vary the bet randomly.
+
+Ooh.  Let
+
+  yt(b) = (1+b)/(2+b)
+
+Then because of the previous result, conditional on Alice betting b, the best Alice can achieve is
+
+  Ao = (2+2b)/(2+b)^3 = (2+2b)/(4+4b+b^2)/(2+b) <= 1/2 (4+4b+b^2)/(4+4b+b^2)/(2+b) <= 1/4
+
+Thus, by picking this strategy, Bob assures Ao <= 1/4.  But Alice can achieve Ao = 1/4 simply by
+flat calling if x > 1/2.  So there we have it
+
+  Ao = 1/4
+
+-----------------------------------------------------------------------------
+
+The previous argument appears flawed after (possibly themselves flawed) detailed computations.  Let's work out
+a discrete model to test it.  Now Alice and Bob are dealt a hand in [0,n)

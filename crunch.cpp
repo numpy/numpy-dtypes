@@ -80,7 +80,7 @@ typedef __uint128_t score_t;
 enum type_t {HIGH_CARD,PAIR_OR_TWO,TRIPS,STRAIGHT,FLUSH,FULL_HOUSE,QUADS,STRAIGHT_FLUSH};
 
 score_t score_hand(cards_t cards) {
-    #define SCORE(type,c0,c1) ((score_t(type)<<(2*39+3))|(score_t(c0)<<39)|(c1))
+    #define SCORE(type,c0,c1) ((score_t(type)<<(64+39+3))|(score_t(c0)<<64)|(c1))
     // TODO: Check for straight flushes
 
     // Check for four of a kind
@@ -142,9 +142,10 @@ struct outcomes_t {
     }
 };
 
-outcomes_t compare_hands(cards_t alice, cards_t bob) {
-    // Precompute number of nontrivial permutations of 5 cards for each possible equality configuration
-    int permutations[16];
+// Precomputed number of nontrivial permutations of 5 cards for each possible equality configuration
+int interesting_permutations[16];
+
+void compute_interesting_permutations() {
     for (int d0 = 0; d0 < 2; d0++)
         for (int d1 = 0; d1 < 2; d1++)
             for (int d2 = 0; d2 < 2; d2++)
@@ -165,12 +166,14 @@ outcomes_t compare_hands(cards_t alice, cards_t bob) {
                                     nope:;
                                 }
                     assert(120/stabilizing*stabilizing==120);
-                    permutations[bit_stack(d0,d1,d2,d3)] = 120/stabilizing;
+                    interesting_permutations[bit_stack(d0,d1,d2,d3)] = 120/stabilizing;
                 }
+}
 
-    // Consider all possible post-flop cards.  For speed, we consider hands only in decreasing order
-    // of card value, and account for the multiple ways such an ordered hand can occur via the above
-    // permutations array.
+// Consider all possible post-flop cards.  For speed, we consider hands only in decreasing order
+// of card value, and account for the multiple ways such an ordered hand can occur via the above
+// permutations array.
+outcomes_t compare_hands(cards_t alice, cards_t bob) {
     const cards_t cards0 = alice + bob;
     const uint ways0 = 1;
     const int threads = omp_get_max_threads();
@@ -188,7 +191,7 @@ outcomes_t compare_hands(cards_t alice, cards_t bob) {
             LOOP(c1,2,3)
                 LOOP(c2,3,4)
                     LOOP(c3,4,5) {
-                        uint ways = ways5*permutations[bit_stack(c0!=c1,c1!=c2,c2!=c3,c3!=c4)];
+                        uint ways = ways5*interesting_permutations[bit_stack(c0!=c1,c1!=c2,c2!=c3,c3!=c4)];
                         score_t alice_score = score_hand(cards5-bob),
                                 bob_score   = score_hand(cards5-alice);
                         if (alice_score>bob_score) outcomes[t].alice += ways;
@@ -216,6 +219,9 @@ void show_comparison(hand_t h0, hand_t h1,outcomes_t o) {
 } // unnamed namespace
 
 int main() {
+    // Initialize
+    compute_interesting_permutations();
+
     // Collect all hands
     vector<hand_t> hands;
     for (int c0 = 0; c0 < 13; c0++) {

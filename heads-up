@@ -11,6 +11,7 @@ usage = "usage: %prog [-c] [-C <dir>] [args...]"
 parser = optparse.OptionParser(usage)
 parser.add_option('-b','--bet',type=float,default=0.,help='set a fixed bet level')
 parser.add_option('--plot',action='store_true',help="plot Alice's equity for bets in [0,bet]")
+parser.add_option('--max',action='store_true',help="maximize Alice's equity as a function of bet in [0,bet]")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')
@@ -299,21 +300,18 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
     if verbose:
         def str_strategy(strat,payoff):
             order = sorted(arange(len(strat)),key=lambda i:-payoff[i])
-            return ' '.join(('' if allclose(strat[i],1) else '%g*'%strat[i])+hands[i] for i in order if strat[i]>0)
+            return ' '.join(('' if allclose(strat[i],1) else '%g*'%strat[i])+hands[i] for i in order if strat[i]>1e-5)
         print
-        print 'Alice: %d hands, %s'%(sum(alice>0),str_strategy(alice,alice_payoff(bet,bob)))
-        print 'Bob: %d hands, %s'%(sum(bob>0),str_strategy(bob,bob_payoff(bet,alice)))
+        print 'Alice: %d hands, %s'%(sum(alice>1e-5),str_strategy(alice,alice_payoff(bet,bob)))
+        print 'Bob: %d hands, %s'%(sum(bob>1e-5),str_strategy(bob,bob_payoff(bet,alice)))
     return equity,alice,bob
 
-if not options.plot:
-    bet = options.bet
-    equity,alice,bob = poker_nash_equilibrium(bet)
-    assert allclose(equity,check_payoff(bet,alice,bob))
-    print "Alice's exact payoff = %g"%equity
-    if 0:
-        print "Alice's approximate payoff = %g"%check_payoff_slow(bet,alice,bob)
-        print "Alice's exact payoff = %g"%check_payoff_medium(bet,alice,bob)
-else:
+def poker_nash_equilibrium_remember(bet,last=list(always_call())):
+    equity,alice,bob = poker_nash_equilibrium(bet,last)
+    last[:] = round_(alice),round_(bob)
+    return equity
+
+if options.plot:
     bet = arange(options.n)
     bet = options.bet/bet[-1]*bet
     print 'bets = %s'%bet
@@ -322,10 +320,25 @@ else:
         e,alice,bob = poker_nash_equilibrium(b,s,verbose=1)
         s[:] = round_(alice),round_(bob)
         return e
-    equity = array([nash(b) for b in bet])
+    equity = array(map(poker_nash_equilibrium_remember,bet))
     import pylab
     pylab.plot(bet,equity)
     pylab.xlabel('bet')
     pylab.ylabel("Alice's equity")
     pylab.title("Alice's equity as a function of fixed bet size")
     pylab.show()
+elif options.max:
+    import scipy.optimize
+    bet,equity,_,evals = scipy.optimize.fminbound(lambda b:-poker_nash_equilibrium_remember(b),0,options.bet,full_output=1,xtol=1e-8)
+    print "\nAlice's preferred bet = %g"%bet
+    print "Alice's equity = %g"%-equity
+    print "Nash equilibrium computations = %d"%evals
+else:
+    bet = options.bet
+    equity,alice,bob = poker_nash_equilibrium(bet)
+    assert allclose(equity,check_payoff(bet,alice,bob))
+    print "Alice's exact payoff = %g"%equity
+    if 0:
+        print "Alice's approximate payoff = %g"%check_payoff_slow(bet,alice,bob)
+        print "Alice's exact payoff = %g"%check_payoff_medium(bet,alice,bob)
+

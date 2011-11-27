@@ -52,9 +52,9 @@ string show_cards(cards_t cards) {
     return r;
 }
 
-template<class I> string binary(I x, int n = 13) {
+template<class I> string binary(I x, int n = 13, bool pad = false) {
     string s = "0b";
-    bool on = false;
+    bool on = pad;
     for (int i = 8*sizeof(I)-1; i >= 0; i--) {
         if (on || x&I(1)<<i) {
             s += x&I(1)<<i?'1':'0';
@@ -325,12 +325,12 @@ outcomes_t compare_hands(hand_t alice, hand_t bob) {
     outcomes_t outcomes[threads];
     // We fix the suits of Alice's cards
     const int sa0 = 0, sa1 = !alice.suited;
-    const cards_t alice_cards = (cards_t(1)<<(4*alice.card0+sa0))|(cards_t(1)<<(4*alice.card1+sa1));
+    const cards_t alice_cards = (cards_t(1)<<(alice.card0+13*sa0))|(cards_t(1)<<(alice.card1+13*sa1));
     // Consider all compatible suits of Bob's cards
     for (int sb0 = 0; sb0 < 4; sb0++)
         for (int sb1 = 0; sb1 < 4; sb1++)
             if ((sb0==sb1)==bob.suited) {
-                const cards_t bob_cards = (cards_t(1)<<(4*bob.card0+sb0))|(cards_t(1)<<(4*bob.card1+sb1));
+                const cards_t bob_cards = (cards_t(1)<<(bob.card0+13*sb0))|(cards_t(1)<<(bob.card1+13*sb1));
                 const cards_t hand_cards = alice_cards|bob_cards;
                 // Make sure we don't use the same card twice
                 if (popcount(hand_cards)<4) continue;

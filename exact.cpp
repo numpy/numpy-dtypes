@@ -23,7 +23,7 @@ typedef uint64_t uint;
 const char show_card[13+1] = "23456789TJQKA";
 const char show_suit[4+1] = "shdc";
 
-// A 52-entry bit set representing the cards in a hand
+// A 52-entry bit set representing the cards in a hand, in suit-value major order
 typedef uint64_t cards_t;
 
 cards_t read_cards(const char* s) {
@@ -36,7 +36,7 @@ cards_t read_cards(const char* s) {
         assert(p);
         const char* q = strchr(show_suit,s[2*i+1]);
         assert(q);
-        cards |= 1L<<(4*(p-show_card)+(q-show_suit));
+        cards |= cards_t(1)<<((p-show_card)+13*(q-show_suit));
     }
     return cards;
 }
@@ -45,11 +45,27 @@ string show_cards(cards_t cards) {
     string r;
     for (int c = 0; c < 13; c++)
         for (int s = 0; s < 4; s++)
-            if (cards&(1L<<(4*c+s))) {
+            if (cards&(cards_t(1)<<(c+13*s))) {
                 r += show_card[c];
                 r += show_suit[s];
             }
     return r;
+}
+
+template<class I> string binary(I x, int n = 13) {
+    string s = "0b";
+    bool on = false;
+    for (int i = 8*sizeof(I)-1; i >= 0; i--) {
+        if (on || x&I(1)<<i) {
+            s += x&I(1)<<i?'1':'0';
+            on = true;
+        }
+        if (on && i%n==0 && i)
+            s += ',';
+    }
+    if (s.size()==2)
+        s += '0';
+    return s;
 }
 
 struct hand_t {
@@ -109,22 +125,26 @@ inline uint hash(uint a, uint b) {
     return hash(hash(0),a,b);
 }
 
+inline uint hash(uint32_t k) {
+    return hash(uint(k));
+}
+
 inline uint hash(__uint128_t k) {
     return hash(k>>64,k);
 }
 
 // Extract the minimum bit, assuming a nonzero input
-inline uint min_bit(uint x) {
+template<class I> inline I min_bit(I x) {
     return x&-x;
 }
 
 // Drop the lowest bit, assuming a nonzero input
-inline uint drop_bit(uint x) {
+template<class I> inline I drop_bit(I x) {
     return x-min_bit(x);
 }
 
 // Drop the two lowest bits, assuming at least two bits set
-inline uint drop_two_bits(uint x) {
+template<class I> inline I drop_two_bits(I x) {
     return drop_bit(drop_bit(x));
 }
 
@@ -132,19 +152,28 @@ inline uint popcount(uint x) {
     return __builtin_popcountl(x);
 }
 
-typedef __uint128_t score_t;
+typedef uint32_t score_t;
+typedef __uint128_t old_score_t;
 
-const score_t HIGH_CARD      = score_t(1)<<108,
-              PAIR           = score_t(1)<<109,
-              TWO_PAIR       = score_t(1)<<110,
-              TRIPS          = score_t(1)<<111,
-              STRAIGHT       = score_t(1)<<112,
-              FLUSH          = score_t(1)<<113,
-              FULL_HOUSE     = score_t(1)<<114,
-              QUADS          = score_t(1)<<115,
-              STRAIGHT_FLUSH = score_t(1)<<116;
+const score_t HIGH_CARD      = 1<<27,
+              PAIR           = 2<<27,
+              TWO_PAIR       = 3<<27,
+              TRIPS          = 4<<27,
+              STRAIGHT       = 5<<27,
+              FLUSH          = 6<<27,
+              FULL_HOUSE     = 7<<27,
+              QUADS          = 8<<27,
+              STRAIGHT_FLUSH = 9<<27;
 
-const score_t type_mask = score_t(0xffff)<<108;
+const score_t type_mask = 0xffff<<27;
+
+old_score_t old_score(score_t s) {
+    old_score_t o = old_score_t(1)<<(107+(s>>27));
+    for (int c = 0; c < 14+13; c++)
+        if (s&(1<<c))
+            o |= old_score_t(1)<<(4*c);
+    return o;
+}
 
 const char* show_type(score_t type) {
     switch (type) {
@@ -161,63 +190,69 @@ const char* show_type(score_t type) {
     }
 }
 
-// Equivalent to popcount, but assumes cards == cards&0x1111111111111
-inline int flush_popcount(cards_t cards) {
-    uint c = cards;
-    c += c>>(8*4);
-    c += c>>(4*4);
-    c += c>>(2*4);
-    c += c>>(1*4);
-    return c&15;
+// Count the number of cards in each suit in parallel
+inline uint count_suits(cards_t cards) {
+    const uint suits = 1+(cards_t(1)<<13)+(cards_t(1)<<26)+(cards_t(1)<<39);
+    uint s = cards; // initially, each suit has 13 single bit chunks
+    s = (s&suits*0x1555)+(s>>1&suits*0x0555); // reduce each suit to 1 single bit and 6 2-bit chunks
+    s = (s&suits*0x1333)+(s>>2&suits*0x0333); // reduce each suit to 1 single bit and 3 4-bit chunks
+    s = (s&suits*0x0f0f)+(s>>4&suits*0x010f); // reduce each suit to 2 8-bit chunks
+    s = (s+(s>>8))&suits*0xf; // reduce each suit to 1 16-bit count (only 4 bits of which can be nonzero)
+    return s;
 }
 
-// If there's a flush, return all cards of that suit (i.e., possibly more than 5 cards),
-// but shifted down to be independent of suit.
-inline cards_t all_flushes(cards_t cards) {
-    for (int s = 0; s < 4; s++) {
-        uint cs = (cards>>s)&0x1111111111111;
-        if (flush_popcount(cs)>=5)
-            return cs;
-    }
-    return 0;
+// Given a set of cards and a set of suits, find the set of cards with that suit
+inline uint32_t cards_with_suit(cards_t cards, uint suits) {
+    uint c = cards&suits*0x1fff;
+    c |= c>>13;
+    c |= c>>26;
+    return c&0x1fff;
 }
 
 // Find all straights in a (suited) set of cards, assuming cards == cards&0x1111111111111
-inline uint all_straights(cards_t unique) {
-    const cards_t wheel = (1L<<48)|1|(1L<<4)|(1L<<8)|(1L<<12);
-    return ((unique<<4)&unique&(unique>>4)&(unique>>8)&(unique>>12))|((unique&wheel)==wheel);
+inline score_t all_straights(score_t unique) {
+    const score_t wheel = (1<<12)|1|2|4|8;
+    const score_t u = unique&unique<<1;
+    return (u&u>>2&unique>>3)|((unique&wheel)==wheel);
 }
 
 // Find the maximum bit set of x, assuming x has at most n bits set, where n <= 3
-inline uint max_bit(uint x, int n) {
+template<class I> inline I max_bit(I x, int n) {
     if (n>1 && x!=min_bit(x)) x -= min_bit(x);
     if (n>2 && x!=min_bit(x)) x -= min_bit(x);
     return x;
 }
 
+inline int unused() {
+    return 7;
+}
+
 // Determine the best possible five card hand out of a bit set of seven cards
 score_t score_hand(cards_t cards) {
-    #define SCORE(type,c0,c1) (type|(score_t(c0)<<(52+4))|(c1))
-    const cards_t each = 0x1111111111111;
+    #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1))
+    const score_t each_card = 0x1fff;
+    const uint each_suit = 1+(cards_t(1)<<13)+(cards_t(1)<<26)+(cards_t(1)<<39);
 
     // Check for straight flushes
-    const cards_t flushes = all_flushes(cards);
+    const uint suits = count_suits(cards);
+    const uint flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
     if (flushes) {
-        const uint straight_flushes = all_straights(flushes);
+        const score_t straight_flushes = all_straights(cards_with_suit(cards,flushes));
         if (straight_flushes)
             return SCORE(STRAIGHT_FLUSH,0,max_bit(straight_flushes,3));
     }
 
     // Check for four of a kind
-    const uint quads = each&cards&(cards>>1)&(cards>>2)&(cards>>3);
-    const cards_t unique = each&(cards|(cards>>1)|(cards>>2)|(cards>>3));
+    const score_t cand = cards&cards>>26;
+    const score_t cor  = (cards|cards>>26)&each_card*(1+(1<<13));
+    const score_t quads = cand&cand>>13;
+    const score_t unique = each_card&(cor|cor>>13);
     if (quads)
         return SCORE(QUADS,quads,max_bit(unique-quads,3));
 
     // Check for a full house
-    const uint counts = (cards&each)+((cards>>1)&each)+((cards>>2)&each)+((cards>>3)&each);
-    const uint trips = counts&(counts>>1)&each;
-    const uint pairs = ~trips&(counts>>1)&each;
+    const score_t trips = (cand&cor>>13)|(cor&cand>>13);
+    const score_t pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
     if (trips) {
         if (pairs) // If there are pairs, there can't be two kinds of trips
             return SCORE(FULL_HOUSE,trips,max_bit(pairs,2));
@@ -227,15 +262,15 @@ score_t score_hand(cards_t cards) {
 
     // Check for flushes
     if (flushes) {
-        const int count = flush_popcount(flushes);
-        cards_t best = flushes;
+        const int count = cards_with_suit(suits,flushes);
+        score_t best = cards_with_suit(cards,flushes);
         if (count>5) best -= min_bit(best);
         if (count>6) best -= min_bit(best);
         return SCORE(FLUSH,0,best);
     }
 
     // Check for straights
-    const cards_t straights = all_straights(unique);
+    const score_t straights = all_straights(unique);
     if (straights)
         return SCORE(STRAIGHT,0,max_bit(straights,3));
 
@@ -307,20 +342,20 @@ outcomes_t compare_hands(hand_t alice, hand_t bob) {
     outcomes_t outcomes[threads];
     // We fix the suits of Alice's cards
     const int sa0 = 0, sa1 = !alice.suited;
-    const cards_t alice_cards = (1L<<(4*alice.card0+sa0))|(1L<<(4*alice.card1+sa1));
+    const cards_t alice_cards = (cards_t(1)<<(4*alice.card0+sa0))|(cards_t(1)<<(4*alice.card1+sa1));
     // Consider all compatible suits of Bob's cards
     for (int sb0 = 0; sb0 < 4; sb0++)
         for (int sb1 = 0; sb1 < 4; sb1++)
             if ((sb0==sb1)==bob.suited) {
-                const cards_t bob_cards = (1L<<(4*bob.card0+sb0))|(1L<<(4*bob.card1+sb1));
+                const cards_t bob_cards = (cards_t(1)<<(4*bob.card0+sb0))|(cards_t(1)<<(4*bob.card1+sb1));
                 const cards_t hand_cards = alice_cards|bob_cards;
                 // Make sure we don't use the same card twice
                 if (popcount(hand_cards)<4) continue;
                 // Make a list of the cards we're allowed to use
                 cards_t free[48];
                 for (int c = 0, i = 0; c < 52; c++)
-                    if (!((1L<<c)&hand_cards))
-                        free[i++] = 1L<<c;
+                    if (!((cards_t(1)<<c)&hand_cards))
+                        free[i++] = cards_t(1)<<c;
                 // Consider all possible sets of shared cards
                 #pragma omp parallel for
                 for (int n = 0; n < 1712304; n++) {
@@ -440,12 +475,15 @@ void regression_test_score_hand(uint multiple) {
     #pragma omp parallel for
     for (uint i = 0; i < m; i++) {
         for (uint j = 0; j < n; j++) {
-            cards_t cards = 0;
-            for (int k = 0; k < 7; k++)
-                cards |= 1L<<hash(i,j,k)%52;
+            cards_t cards = 0, old_cards = 0;
+            for (int k = 0; k < 7; k++) {
+                int h = hash(i,j,k)%52;
+                cards |= cards_t(1)<<(h/4+13*(h%4));
+                old_cards |= cards_t(1)<<h;
+            }
             if (popcount(cards)<7)
                 continue;
-            hashes[i] = hash(hashes[i],hash(score_hand(cards)));
+            hashes[i] = hash(hashes[i],hash(old_score(score_hand(cards))));
         }
         if (i%1024==0) {
             #pragma omp critical

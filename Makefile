@@ -8,7 +8,7 @@ preflop-matchups.txt:
 	gunzip preflop-matchups.txt.gz
 
 exact.txt: exact
-	./exact | tee $@
+	./exact all | tee $@
 
 %: %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $^

@@ -9,7 +9,9 @@
 
 using std::ostream;
 using std::cout;
+using std::cerr;
 using std::endl;
+using std::flush;
 using std::vector;
 using std::string;
 
@@ -21,7 +23,7 @@ typedef uint64_t uint;
 const char show_card[13+1] = "23456789TJQKA";
 const char show_suit[4+1] = "shdc";
 
-// 13 3 bit chunks, counting the occurrences of each card without suit
+// A 52-entry bit set representing the cards in a hand
 typedef uint64_t cards_t;
 
 cards_t read_cards(const char* s) {
@@ -84,6 +86,31 @@ inline uint hash(uint k) {
   k = k^(k>>28);
   k = k+(k<<31);
   return k;
+}
+
+// From http://burtleburtle.net/bob/c/lookup8.c
+inline uint hash(uint a, uint b, uint c) {
+    a -= b; a -= c; a ^= c>>43;
+    b -= c; b -= a; b ^= a<<9;
+    c -= a; c -= b; c ^= b>>8;
+    a -= b; a -= c; a ^= c>>38;
+    b -= c; b -= a; b ^= a<<23;
+    c -= a; c -= b; c ^= b>>5;
+    a -= b; a -= c; a ^= c>>35;
+    b -= c; b -= a; b ^= a<<49;
+    c -= a; c -= b; c ^= b>>11;
+    a -= b; a -= c; a ^= c>>12;
+    b -= c; b -= a; b ^= a<<18;
+    c -= a; c -= b; c ^= b>>22;
+    return c;
+}
+
+inline uint hash(uint a, uint b) {
+    return hash(hash(0),a,b);
+}
+
+inline uint hash(__uint128_t k) {
+    return hash(k>>64,k);
 }
 
 // Extract the minimum bit, assuming a nonzero input
@@ -405,9 +432,53 @@ void test_score_hand() {
     }
 }
 
+void regression_test_score_hand() {
+    // Score a large number of hands
+    const uint m = 1<<17, n = 1<<10;
+    vector<uint> hashes(m);
+    #pragma omp parallel for
+    for (uint i = 0; i < m; i++) {
+        for (uint j = 0; j < n; j++) {
+            cards_t cards = 0;
+            for (int k = 0; k < 7; k++)
+                cards |= 1L<<hash(i,j,k)%52;
+            if (popcount(cards)<7)
+                continue;
+            hashes[i] = hash(hashes[i],hash(score_hand(cards)));
+        }
+        if (i%n==0) {
+            #pragma omp critical
+            cout<<'.'<<flush;
+        }
+    }
+    cout << endl;
+
+    // Merge hashes
+    uint merged = 0;
+    for (uint i = 0; i < m; i++)
+        merged = hash(merged,hashes[i]);
+
+    const uint expected = 0x87e12072088a7eaa;
+    if (merged!=expected) {
+        cout<<"regression test: expected 0x"<<std::hex<<expected<<", got 0x"<<merged<<std::dec<<endl;
+        exit(1);
+    } else
+        cout<<"regression test passed!"<<endl;
+}
+
+void usage(const char** argv) {
+    cerr<<"usage: "<<argv[0]<<" hands|test|some|all"<<endl;
+}
+
 } // unnamed namespace
 
-int main() {
+int main(int argc, const char** argv) {
+    if (argc!=2) {
+        usage(argv);
+        return 1;
+    }
+    string cmd = argv[1];
+
     // Initialize
     compute_five_subsets();
 
@@ -425,28 +496,39 @@ int main() {
     test_score_hand();
 
     // Print hands
-    if (0) {
+    if (cmd=="hands") {
         cout<<"hands =";
         for (uint i = 0; i < hands.size(); i++)
             cout<<' '<<hands[i];
         cout<<endl;
     }
 
+    // Run more expensive tests
+    else if (cmd=="test")
+        regression_test_score_hand();
+
     // Compute equities for some (mostly random) pairs of hands
-    if (0) {
+    else if (cmd=="some") {
         uint random = 0;
         for (int i = 0; i < 10; i++) {
             hand_t h0 = hands[hash(random++)%hands.size()];
             hand_t h1 = hands[hash(random++)%hands.size()];
-            //if (hash(random++)%4==0) h1 = h0;
             show_comparison(h0,h1,compare_hands(h0,h1));
         }
     }
 
     // Compute all hand pair equities
-    for (uint i = 0; i < hands.size(); i++)
-        for (uint j = 0; j <= i; j++)
-            show_comparison(hands[i],hands[j],compare_hands(hands[i],hands[j]));
+    else if (cmd=="all")
+        for (uint i = 0; i < hands.size(); i++)
+            for (uint j = 0; j <= i; j++)
+                show_comparison(hands[i],hands[j],compare_hands(hands[i],hands[j]));
+
+    // Didn't understand command
+    else {
+        usage(argv);
+        cerr<<"unknown command: "<<cmd<<endl;
+        return 1;
+    }
 
     return 0;
 }

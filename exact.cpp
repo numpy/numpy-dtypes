@@ -432,9 +432,10 @@ void test_score_hand() {
     }
 }
 
-void regression_test_score_hand() {
+void regression_test_score_hand(uint multiple) {
     // Score a large number of hands
-    const uint m = 1<<17, n = 1<<10;
+    const uint m = 1<<17, n = multiple<<10;
+    cout<<"regression test: scoring "<<m*n<<" hands"<<endl;
     vector<uint> hashes(m);
     #pragma omp parallel for
     for (uint i = 0; i < m; i++) {
@@ -446,7 +447,7 @@ void regression_test_score_hand() {
                 continue;
             hashes[i] = hash(hashes[i],hash(score_hand(cards)));
         }
-        if (i%n==0) {
+        if (i%1024==0) {
             #pragma omp critical
             cout<<'.'<<flush;
         }
@@ -458,7 +459,8 @@ void regression_test_score_hand() {
     for (uint i = 0; i < m; i++)
         merged = hash(merged,hashes[i]);
 
-    const uint expected = 0x87e12072088a7eaa;
+    const uint expected = multiple==1 ?0x87e12072088a7eaa:
+                          multiple==10?0x0c04348225350a32:0;
     if (merged!=expected) {
         cout<<"regression test: expected 0x"<<std::hex<<expected<<", got 0x"<<merged<<std::dec<<endl;
         exit(1);
@@ -473,7 +475,7 @@ void usage(const char** argv) {
 } // unnamed namespace
 
 int main(int argc, const char** argv) {
-    if (argc!=2) {
+    if (argc<2) {
         usage(argv);
         return 1;
     }
@@ -504,8 +506,10 @@ int main(int argc, const char** argv) {
     }
 
     // Run more expensive tests
-    else if (cmd=="test")
-        regression_test_score_hand();
+    else if (cmd=="test") {
+        uint m = argc<3?1:atoi(argv[2]);
+        regression_test_score_hand(m);
+    }
 
     // Compute equities for some (mostly random) pairs of hands
     else if (cmd=="some") {

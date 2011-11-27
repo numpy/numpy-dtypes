@@ -129,10 +129,6 @@ inline uint hash(uint32_t k) {
     return hash(uint(k));
 }
 
-inline uint hash(__uint128_t k) {
-    return hash(k>>64,k);
-}
-
 // Extract the minimum bit, assuming a nonzero input
 template<class I> inline I min_bit(I x) {
     return x&-x;
@@ -153,7 +149,6 @@ inline uint popcount(uint x) {
 }
 
 typedef uint32_t score_t;
-typedef __uint128_t old_score_t;
 
 const score_t HIGH_CARD      = 1<<27,
               PAIR           = 2<<27,
@@ -166,14 +161,6 @@ const score_t HIGH_CARD      = 1<<27,
               STRAIGHT_FLUSH = 9<<27;
 
 const score_t type_mask = 0xffff<<27;
-
-old_score_t old_score(score_t s) {
-    old_score_t o = old_score_t(1)<<(107+(s>>27));
-    for (int c = 0; c < 14+13; c++)
-        if (s&(1<<c))
-            o |= old_score_t(1)<<(4*c);
-    return o;
-}
 
 const char* show_type(score_t type) {
     switch (type) {
@@ -475,15 +462,12 @@ void regression_test_score_hand(uint multiple) {
     #pragma omp parallel for
     for (uint i = 0; i < m; i++) {
         for (uint j = 0; j < n; j++) {
-            cards_t cards = 0, old_cards = 0;
-            for (int k = 0; k < 7; k++) {
-                int h = hash(i,j,k)%52;
-                cards |= cards_t(1)<<(h/4+13*(h%4));
-                old_cards |= cards_t(1)<<h;
-            }
+            cards_t cards = 0;
+            for (int k = 0; k < 7; k++)
+                cards |= cards_t(1)<<hash(i,j,k)%52;
             if (popcount(cards)<7)
                 continue;
-            hashes[i] = hash(hashes[i],hash(old_score(score_hand(cards))));
+            hashes[i] = hash(hashes[i],hash(score_hand(cards)));
         }
         if (i%1024==0) {
             #pragma omp critical
@@ -497,8 +481,8 @@ void regression_test_score_hand(uint multiple) {
     for (uint i = 0; i < m; i++)
         merged = hash(merged,hashes[i]);
 
-    const uint expected = multiple==1 ?0x87e12072088a7eaa:
-                          multiple==10?0x0c04348225350a32:0;
+    const uint expected = multiple==1 ?0x10aebbab7697ed56:
+                          multiple==10?0xc9c781853cf4fe6a:0;
     if (merged!=expected) {
         cout<<"regression test: expected 0x"<<std::hex<<expected<<", got 0x"<<merged<<std::dec<<endl;
         exit(1);

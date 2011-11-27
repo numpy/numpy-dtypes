@@ -1,4 +1,4 @@
-all: exact old-exact preflop-matchups.txt
+all: exact preflop-matchups.txt
 
 CXX = g++-mp-4.5
 CXXFLAGS = -Wall -Wunused -std=c++0x -O3 -funroll-loops -march=core2 -fopenmp

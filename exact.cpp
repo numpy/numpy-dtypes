@@ -210,10 +210,6 @@ template<class I> inline I max_bit(I x, int n) {
     return x;
 }
 
-inline int unused() {
-    return 7;
-}
-
 // Determine the best possible five card hand out of a bit set of seven cards
 score_t score_hand(cards_t cards) {
     #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1))

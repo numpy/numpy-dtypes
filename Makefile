@@ -15,3 +15,7 @@ exact.txt: exact
 
 %.E: %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ -E $^
+
+.PHONY: clean
+clean:
+	rm -f exact *.o *.E

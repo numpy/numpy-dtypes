@@ -2,16 +2,19 @@
 
 from __future__ import division
 import re
+import sys
 from numpy import *
 import optparse
 import cvxopt 
 import cvxopt.solvers
+from fractions import Fraction
 
 usage = "usage: %prog [-c] [-C <dir>] [args...]"
 parser = optparse.OptionParser(usage)
 parser.add_option('-b','--bet',type=float,default=0.,help='set a fixed bet level')
 parser.add_option('--plot',action='store_true',help="plot Alice's equity for bets in [0,bet]")
 parser.add_option('--max',action='store_true',help="maximize Alice's equity as a function of bet in [0,bet]")
+parser.add_option('--compare',action='store_true',help="compare exact hand probabilities against online approximates")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')
@@ -42,6 +45,36 @@ def parse_preflop_matchups():
     assert all(abs(win+win.T-1)<=1e-10)
     return win
 win = parse_preflop_matchups()
+
+def die(s):
+    print>>sys.stderr, s
+    sys.exit(1)
+
+# Load exact win probabilities.  Important: win[a,b]+win[b,a]<1 due to ties, unlike the approximate version above
+def parse_exact_matchups():
+    matchup_pattern = re.compile(r'^(\w+)\s+vs\.\s+(\w+):$')
+    entry_pattern = re.compile(r'^\s+(Alice|Bob|Tie):\s+(\d+)\/(\d+) = ([\d.]+)$')
+    lines = open('exact.txt').readlines()
+    assert len(lines)%4==0
+    win = zeros((len(hands),)*2,dtype=object)
+    for i in xrange(len(lines)//4):
+        m = matchup_pattern.match(lines[4*i])
+        if not m: die('Weird matchup line: %s'%lines[4*i][:-1])
+        h0,h1 = hand_id[m.group(1)],hand_id[m.group(2)]
+        def entry(j,name):
+            m = entry_pattern.match(lines[4*i+j+1])
+            if not m: die('Weird entry line: %s'%lines[4*i+j+1][:-1])
+            assert m.group(1)==name
+            exact = Fraction(int(m.group(2)),int(m.group(3)))
+            approx = float(m.group(4))
+            assert allclose(float(exact),approx)
+            return exact
+        w,l,t= entry(0,'Alice'),entry(1,'Bob'),entry(2,'Tie')
+        assert w+l+t==1
+        win[h0,h1] = w
+        win[h1,h0] = l
+    assert all(win>0)
+    return win
 
 # Build a map from pairs of cards (represented as 4*id+suit) to hand ids
 def compute_cards_to_hand():
@@ -333,6 +366,12 @@ elif options.max:
     print "\nAlice's preferred bet = %g"%bet
     print "Alice's equity = %g"%-equity
     print "Nash equilibrium computations = %d"%evals
+elif options.compare:
+    exact = parse_exact_matchups()
+    exact = exact+(1-exact-exact.T)/2
+    assert all(exact+exact.T)==1
+    i = unravel_index(argmax(abs(exact.astype(float)-win)),win.shape)
+    print 'worse error: exact %s = %g, approx %g, error %g'%(exact[i],float(exact[i]),win[i],abs(float(exact[i])-win[i]))
 else:
     bet = options.bet
     equity,alice,bob = poker_nash_equilibrium(bet)

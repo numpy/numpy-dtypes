@@ -6,6 +6,8 @@
 #include <vector>
 #include <sys/stat.h>
 #include <OpenCL/opencl.h>
+#include <omp.h>
+#include <getopt.h>
 #include "score.h"
 
 using std::ostream;
@@ -152,9 +154,9 @@ vector<device_t> devices;
 const size_t max_cards = 20<<17;
 const size_t result_space = max(sizeof(score_t)*max_cards,sizeof(uint64_t)*NUM_FIVE_SUBSETS/BLOCK_SIZE);
 
-void initialize_opencl(bool gpu_only, bool verbose=true) {
+void initialize_opencl(int device_types, bool verbose=true) {
     // Allocate context
-    opencl_context = clCreateContextFromType(0,gpu_only?CL_DEVICE_TYPE_GPU:CL_DEVICE_TYPE_ALL,0,0,0);
+    opencl_context = clCreateContextFromType(0,device_types,0,0,0);
 
     // Query all available devices
     size_t device_space;
@@ -236,9 +238,9 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
 }
 
 // Score a bunch of hands in parallel using OpenCL
-void score_hands_opencl(size_t n, score_t* scores, const cards_t* cards) {
+void score_hands_opencl(size_t device, size_t n, score_t* scores, const cards_t* cards) {
     assert(n <= max_cards);
-    const device_t& d = devices.at(0);
+    const device_t& d = devices.at(device);
     size_t count = (n+3)/4;
     clEnqueueWriteBuffer(d.queue,d.cards,CL_TRUE,0,n*sizeof(cards_t),cards,0,0,0);
     clEnqueueNDRangeKernel(d.queue,d.score_hands,1,0,&count,0,0,0,0);
@@ -246,9 +248,9 @@ void score_hands_opencl(size_t n, score_t* scores, const cards_t* cards) {
 }
 
 // Hash a bunch of hands in parallel using OpenCL
-void hash_scores_opencl(size_t n, uint64_t* hashes) {
+void hash_scores_opencl(size_t device, size_t n, uint64_t* hashes) {
     assert(sizeof(uint64_t)*n <= result_space);
-    const device_t& d = devices.at(0);
+    const device_t& d = devices.at(device);
     const size_t batch = 1<<14;
     for (size_t i = 0; i < n; i += batch) {
         size_t count = min(batch,n-i);
@@ -262,8 +264,8 @@ void hash_scores_opencl(size_t n, uint64_t* hashes) {
 }
 
 // Process all five subsets in parallel using OpenCL
-uint64_t compare_cards_opencl(cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
-    const device_t& d = devices.at(0);
+uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
+    const device_t& d = devices.at(device);
     // Set cards
     clSetKernelArg(d.compare_cards,3,sizeof(cards_t),&alice_cards);
     clSetKernelArg(d.compare_cards,4,sizeof(cards_t),&bob_cards);
@@ -289,7 +291,7 @@ uint64_t compare_cards_opencl(cards_t alice_cards, cards_t bob_cards, const card
         cards[2*i+1] = bob_cards|shared;
     }
     score_t scores[2*missing];
-    score_hands_opencl(2*missing,scores,cards);
+    score_hands_opencl(device,2*missing,scores,cards);
     for (size_t i = 0; i < missing; i++) {
         const score_t alice_score = scores[2*i+0], bob_score = scores[2*i+1];
         sum += alice_score>bob_score?(uint64_t)1<<32:alice_score<bob_score?1u:0;
@@ -303,7 +305,7 @@ inline uint32_t bit_stack(bool b0, bool b1, bool b2, bool b3) {
 
 // Consider all possible sets of shared cards to determine the probabilities of wins, losses, and ties.
 // For efficiency, the set of shared cards is generated in decreasing order (this saves a factor of 5! = 120).
-outcomes_t compare_hands(hand_t alice, hand_t bob) {
+outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
     uint32_t total = 0;
     uint64_t wins = 0;
     uint64_t cache[16] = {0}; // Cache wins based on 4 suit equality bits
@@ -327,7 +329,7 @@ outcomes_t compare_hands(hand_t alice, hand_t bob) {
                         if (!((cards_t(1)<<c)&hand_cards))
                             free[i++] = cards_t(1)<<c;
                     // Consider all possible sets of shared cards
-                    cache[sig] = compare_cards_opencl(alice_cards, bob_cards, free);
+                    cache[sig] = compare_cards_opencl(device, alice_cards, bob_cards, free);
                 }
                 wins += cache[sig];
                 total += NUM_FIVE_SUBSETS;
@@ -346,7 +348,7 @@ void show_comparison(hand_t alice, hand_t bob,outcomes_t o) {
     cout<<"  Bob:   "<<o.bob<<"/"<<o.total()<<" = "<<(double)o.bob/o.total()<<endl;
     cout<<"  Tie:   "<<o.tie<<"/"<<o.total()<<" = "<<(double)o.tie/o.total()<<endl;
     if (alice==bob && o.alice!=o.bob) {
-        cout<<"  Error: Identical hands should win equally often"<<endl;
+        cerr<<"  Error: Identical hands should win equally often"<<endl;
         exit(1);
     }
 }
@@ -425,7 +427,7 @@ void test_score_hand() {
 
     // Score them
     score_t scores[2*n];
-    score_hands_opencl(2*n,scores,cards);
+    score_hands_opencl(0,2*n,scores,cards);
 
     // Check results
     for (size_t i = 0; i < sizeof(tests)/sizeof(test_t); i++) {
@@ -459,7 +461,7 @@ void regression_test_score_hand(size_t multiple) {
     const size_t m = multiple<<17, n = 1<<10;
     cout<<"score test: scoring "<<m*n<<" hands"<<endl;
     vector<uint64_t> hashes(m);
-    hash_scores_opencl(m,&hashes[0]);
+    hash_scores_opencl(0,m,&hashes[0]);
 
     // Merge hashes
     uint64_t merged = 0;
@@ -488,15 +490,52 @@ void compute_hands() {
     assert(hands.size()==169);
 }
 
+vector<outcomes_t> compare_many_hands(const vector<hand_t>& pairs, bool verbose) {
+    assert(pairs.size()%2==0);
+    size_t n = pairs.size()/2;
+    size_t next = 0, show = 0;
+    vector<outcomes_t> outcomes(n);
+    #pragma omp parallel num_threads(devices.size()) 
+    {
+        size_t device = omp_get_thread_num();
+        for (;;) {
+            // Grab next free job
+            size_t job;
+            #pragma omp critical 
+            job = next++;
+            if (job>=n) break;
+            // Compute
+            outcomes_t o = compare_hands(device,pairs[2*job],pairs[2*job+1]);
+            // Store results and optionally print
+            #pragma omp critical
+            {
+                outcomes[job] = o;
+                while (show<n && outcomes[show].total()) {
+                    if (verbose)
+                        show_comparison(pairs[2*show],pairs[2*show+1],outcomes[show]);
+                    else
+                        cout<<(show?", ":"")<<pairs[2*show]<<" vs. "<<pairs[2*show+1]<<flush;
+                    show++;
+                }
+            }
+        }
+    }
+    return outcomes;
+}
+
 void regression_test_compare_hands(size_t n) {
     cout<<"compare test: comparing "<<n<<" random pairs of hands, including at least one matched pair"<<endl;
-    uint64_t signature = 0;
+    vector<hand_t> pairs;
     for (uint64_t i = 0; i < n; i++) {
         hand_t alice =   hands[hash2(i,0)%hands.size()],
                bob   = i?hands[hash2(i,1)%hands.size()]:alice;
-        if (i) cout<<", ";
-        cout<<alice<<" vs. "<<bob<<flush;
-        outcomes_t o = compare_hands(alice,bob);
+        pairs.push_back(alice);
+        pairs.push_back(bob);
+    }
+    vector<outcomes_t> outcomes = compare_many_hands(pairs,false);
+    uint64_t signature = 0;
+    for (uint64_t i = 0; i < n; i++) {
+        outcomes_t o = outcomes[i];
         signature = hash2(signature,hash3(o.alice,o.bob,o.tie));
     }
     cout<<endl;
@@ -509,23 +548,43 @@ void regression_test_compare_hands(size_t n) {
         cout<<"compare test passed!"<<endl;
 }
 
-void usage(const char** argv) {
-    cerr<<"usage: "<<argv[0]<<" hands|test|some|all"<<endl;
+void usage(const char* program) {
+    cerr<<"usage: "<<program<<" hands|test|some|all"<<endl;
 }
 
 } // unnamed namespace
 
-int main(int argc, const char** argv) {
-    if (argc<2) {
-        usage(argv);
+int main(int argc, char** argv) {
+    const char* program = argv[0];
+    int device_types = CL_DEVICE_TYPE_ALL;
+
+    const option options[] = {
+        {"cpu",no_argument,0,'c'},
+        {"gpu",no_argument,0,'g'},
+        {"all",no_argument,0,'a'},
+        {0,0,0,0}};
+    int ch;
+    while ((ch = getopt_long(argc,argv,"cga",options,0)) != -1)
+         switch (ch) {
+             case 'c': device_types = CL_DEVICE_TYPE_CPU; break;
+             case 'g': device_types = CL_DEVICE_TYPE_GPU; break;
+             case 'a': device_types = CL_DEVICE_TYPE_ALL; break;
+             default: usage(program); return 1;
+    }
+    argc -= optind;
+    argv += optind;
+
+    if (argc<1) {
+        usage(program);
+        cerr<<"command expected"<<endl;
         return 1;
     }
-    string cmd = argv[1];
+    string cmd = argv[0];
 
     // Initialize
     compute_five_subsets();
     compute_hands();
-    initialize_opencl(true);
+    initialize_opencl(device_types,true);
 
     // Run a few tests
     test_score_hand();
@@ -540,30 +599,34 @@ int main(int argc, const char** argv) {
 
     // Run more expensive tests
     else if (cmd=="test") {
-        size_t m = argc<3?1:atoi(argv[2]);
+        size_t m = argc<2?1:atoi(argv[1]);
         regression_test_compare_hands(m+1);
         regression_test_score_hand(m);
     }
 
     // Compute equities for some (mostly random) pairs of hands
     else if (cmd=="some") {
-        uint64_t random = 0;
-        for (int i = 0; i < 10; i++) {
-            hand_t h0 = hands[hash(random++)%hands.size()];
-            hand_t h1 = hands[hash(random++)%hands.size()];
-            show_comparison(h0,h1,compare_hands(h0,h1));
-        }
+        size_t n = argc<2?10:atoi(argv[1]);
+        vector<hand_t> pairs;
+        for (size_t r = 0; r < 2*n; r++)
+            pairs.push_back(hands[hash(r)%hands.size()]);
+        compare_many_hands(pairs,true);
     }
 
     // Compute all hand pair equities
-    else if (cmd=="all")
+    else if (cmd=="all") {
+        vector<hand_t> pairs;
         for (size_t i = 0; i < hands.size(); i++)
-            for (size_t j = 0; j <= i; j++)
-                show_comparison(hands[i],hands[j],compare_hands(hands[i],hands[j]));
+            for (size_t j = 0; j <= i; j++) {
+                pairs.push_back(hands[i]);
+                pairs.push_back(hands[j]);
+            }
+        compare_many_hands(pairs,true);
+    }
 
     // Didn't understand command
     else {
-        usage(argv);
+        usage(program);
         cerr<<"unknown command: "<<cmd<<endl;
         return 1;
     }

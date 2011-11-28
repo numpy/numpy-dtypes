@@ -7,8 +7,8 @@ preflop-matchups.txt:
 	wget http://www.pokerstove.com/analysis/preflop-matchups.txt.gz
 	gunzip preflop-matchups.txt.gz
 
-exact.txt: exact
-	./exact all | tee $@
+exact.txt: exact exact.cl
+	time ./exact all | tee $@
 
 exact: exact.cpp score.h
 	$(CXX) $(CXXFLAGS) -o $@ $<

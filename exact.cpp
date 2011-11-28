@@ -179,10 +179,6 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
         cerr<<endl;
     }
 
-    // Make a command queue for each device
-    for (size_t i = 0; i < devices.size(); i++)
-        devices[i].queue = clCreateCommandQueue(opencl_context,devices[i].id,0,0);
-
     // Load and build the program
     FILE* file = fopen("score.cl","r");
     if (!file) {
@@ -211,6 +207,10 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
         }
         exit(1);
     }
+
+    // Make a command queue for each device
+    for (size_t i = 0; i < devices.size(); i++)
+        devices[i].queue = clCreateCommandQueue(opencl_context,devices[i].id,0,0);
 
     // Set up each device
     for (size_t i = 0; i < devices.size(); i++) {
@@ -297,11 +297,16 @@ uint64_t compare_cards_opencl(cards_t alice_cards, cards_t bob_cards, const card
     return sum;
 }
 
+inline uint32_t bit_stack(bool b0, bool b1, bool b2, bool b3) {
+    return b0|b1<<1|b2<<2|b3<<3;
+}
+
 // Consider all possible sets of shared cards to determine the probabilities of wins, losses, and ties.
 // For efficiency, the set of shared cards is generated in decreasing order (this saves a factor of 5! = 120).
 outcomes_t compare_hands(hand_t alice, hand_t bob) {
     uint32_t total = 0;
     uint64_t wins = 0;
+    uint64_t cache[16] = {0}; // Cache wins based on 4 suit equality bits
     // We fix the suits of Alice's cards
     const int sa0 = 0, sa1 = !alice.suited;
     const cards_t alice_cards = (cards_t(1)<<(alice.card0+13*sa0))|(cards_t(1)<<(alice.card1+13*sa1));
@@ -313,14 +318,19 @@ outcomes_t compare_hands(hand_t alice, hand_t bob) {
                 const cards_t hand_cards = alice_cards|bob_cards;
                 // Make sure we don't use the same card twice
                 if (popcount(hand_cards)<4) continue;
-                // Make a list of the cards we're allowed to use
-                cards_t free[48];
-                for (int c = 0, i = 0; c < 52; c++)
-                    if (!((cards_t(1)<<c)&hand_cards))
-                        free[i++] = cards_t(1)<<c;
-                // Consider all possible sets of shared cards
+                // Did we already do this one?
+                int sig = bit_stack(sa0==sb0,sa0==sb1,sa1==sb0,sa1==sb1);
+                if (!cache[sig]) {
+                    // Make a list of the cards we're allowed to use
+                    cards_t free[48];
+                    for (int c = 0, i = 0; c < 52; c++)
+                        if (!((cards_t(1)<<c)&hand_cards))
+                            free[i++] = cards_t(1)<<c;
+                    // Consider all possible sets of shared cards
+                    cache[sig] = compare_cards_opencl(alice_cards, bob_cards, free);
+                }
+                wins += cache[sig];
                 total += NUM_FIVE_SUBSETS;
-                wins += compare_cards_opencl(alice_cards, bob_cards, free);
             }
     // Done
     outcomes_t o;

@@ -6,7 +6,7 @@
 #include <vector>
 #include <sys/stat.h>
 #include <OpenCL/opencl.h>
-#include "exact.h"
+#include "score.h"
 
 using std::ostream;
 using std::cin;
@@ -130,14 +130,8 @@ void compute_five_subsets() {
         for (int i1 = 0; i1 < i0; i1++)
             for (int i2 = 0; i2 < i1; i2++)
                 for (int i3 = 0; i3 < i2; i3++)
-                    for (int i4 = 0; i4 < i3; i4++) {
-                        five_subsets[n].i0 = i0;
-                        five_subsets[n].i1 = i1;
-                        five_subsets[n].i2 = i2;
-                        five_subsets[n].i3 = i3;
-                        five_subsets[n].i4 = i4;
-                        n++;
-                    }
+                    for (int i4 = 0; i4 < i3; i4++)
+                        five_subsets[n++] = i0|i1<<6|i2<<12|i3<<18|i4<<24;
 }
 
 // OpenCL information
@@ -190,13 +184,13 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
         devices[i].queue = clCreateCommandQueue(opencl_context,devices[i].id,0,0);
 
     // Load and build the program
-    FILE* file = fopen("exact.cl","r");
+    FILE* file = fopen("score.cl","r");
     if (!file) {
-        cerr<<"error: couldn't open \"exact.cl\" for reading"<<endl;
+        cerr<<"error: couldn't open \"score.cl\" for reading"<<endl;
         exit(1);
     }
     struct stat st;
-    stat("exact.cl",&st);
+    stat("score.cl",&st);
     string source(st.st_size+1,0);
     fread(&source[0],st.st_size,1,file);
     fclose(file);
@@ -245,8 +239,9 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
 void score_hands_opencl(size_t n, score_t* scores, const cards_t* cards) {
     assert(n <= max_cards);
     const device_t& d = devices.at(0);
+    size_t count = (n+3)/4;
     clEnqueueWriteBuffer(d.queue,d.cards,CL_TRUE,0,n*sizeof(cards_t),cards,0,0,0);
-    clEnqueueNDRangeKernel(d.queue,d.score_hands,1,0,&n,0,0,0,0);
+    clEnqueueNDRangeKernel(d.queue,d.score_hands,1,0,&count,0,0,0,0);
     clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,n*sizeof(score_t),scores,0,0,0);
 }
 

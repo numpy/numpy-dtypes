@@ -10,7 +10,7 @@ preflop-matchups.txt:
 exact.txt: exact
 	./exact all | tee $@
 
-exact: exact.cpp exact.h
+exact: exact.cpp score.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 %.E: %.cpp

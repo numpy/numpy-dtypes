@@ -1,13 +1,17 @@
 // Compute exact winning probabilities for all preflop holdem matchups
 
+#define USE_OPENMP 0
+
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <vector>
-#include <omp.h>
 #include <sys/stat.h>
 #include <OpenCL/opencl.h>
-#include "exact.cl"
+#if USE_OPENMP
+#include <omp.h>
+#endif
+#include "exact.h"
 
 using std::ostream;
 using std::cout;
@@ -16,6 +20,7 @@ using std::endl;
 using std::flush;
 using std::vector;
 using std::string;
+using std::max;
 
 namespace {
 
@@ -175,8 +180,21 @@ void compute_five_subsets() {
                     }
 }
 
+// Score a bunch of hands in parallel using OpenMP
+void score_hands_openmp(size_t n, score_t* scores, const cards_t* cards) {
+#if USE_OPENMP
+    #pragma omp parallel for
+    for (size_t i = 0; i < n; i++)
+        scores[i] = score_hand(cards[i]);
+#else
+    cerr<<"error: openmp support not enabled"<<endl;
+    exit(1);
+#endif
+}
+
 // Process all five subsets in parallel using OpenMP
 inline uint64_t compare_cards_openmp(cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
+#if USE_OPENMP
     // Traverse all hands
     const int threads = omp_get_max_threads();
     uint64_t outcomes[threads];
@@ -190,16 +208,28 @@ inline uint64_t compare_cards_openmp(cards_t alice_cards, cards_t bob_cards, con
     for (int t = 0; t < threads; t++)
         sum += outcomes[t];
     return sum;
+#else
+    cerr<<"error: openmp support not enabled"<<endl;
+    exit(1);
+#endif
 }
 
 // OpenCL information
 cl_context opencl_context;
-vector<cl_device_id> opencl_devices;
-vector<cl_command_queue> opencl_queues;
-vector<cl_mem> opencl_five_subsets;
-vector<cl_mem> opencl_free;
-vector<cl_mem> opencl_results;
-vector<cl_kernel> compare_cards_kernel;
+struct device_t {
+    cl_device_id id;
+    cl_command_queue queue;
+    cl_kernel score_hands;
+    cl_mem cards;
+    cl_kernel compare_cards;
+    cl_mem five_subsets;
+    cl_mem free;
+    cl_mem results;
+};
+vector<device_t> devices;
+
+const size_t max_cards = 1<<20;
+const size_t result_space = max(sizeof(score_t)*max_cards,sizeof(uint64_t)*NUM_FIVE_SUBSETS/BLOCK_SIZE);
 
 void initialize_opencl(bool gpu_only, bool verbose=true) {
     // Allocate context
@@ -212,13 +242,16 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
         cerr<<"error: no available OpenCL devices"<<endl;
         exit(1);
     }
-    opencl_devices.resize(device_space/sizeof(cl_device_id));
-    clGetContextInfo(opencl_context,CL_CONTEXT_DEVICES,device_space,&opencl_devices[0],0);
+    devices.resize(device_space/sizeof(cl_device_id));
+    vector<cl_device_id> ids(devices.size());
+    clGetContextInfo(opencl_context,CL_CONTEXT_DEVICES,device_space,&ids[0],0);
+    for (size_t i = 0; i < devices.size(); i++)
+        devices[i].id = ids[i];
     if (verbose) {
-        cerr<<"found "<<opencl_devices.size()<<" opencl "<<(opencl_devices.size()==1?"device: ":"devices: ");
-        for (size_t i = 0; i < opencl_devices.size(); i++) {
+        cerr<<"found "<<devices.size()<<" opencl "<<(devices.size()==1?"device: ":"devices: ");
+        for (size_t i = 0; i < devices.size(); i++) {
             char name[1024];
-            clGetDeviceInfo(opencl_devices[i],CL_DEVICE_NAME,sizeof(name)-1,name,0);
+            clGetDeviceInfo(devices[i].id,CL_DEVICE_NAME,sizeof(name)-1,name,0);
             if (i) cerr<<", ";
             cerr<<name;
         }
@@ -226,9 +259,8 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
     }
 
     // Make a command queue for each device
-    opencl_queues.resize(opencl_devices.size());
-    for (size_t i = 0; i < opencl_devices.size(); i++)
-        opencl_queues[i] = clCreateCommandQueue(opencl_context,opencl_devices[i],0,0);
+    for (size_t i = 0; i < devices.size(); i++)
+        devices[i].queue = clCreateCommandQueue(opencl_context,devices[i].id,0,0);
 
     // Load and build the program
     FILE* file = fopen("exact.cl","r");
@@ -242,60 +274,86 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
     fread(&source[0],st.st_size,1,file);
     fclose(file);
     const char* source_p = source.c_str();
+    char options[2048] = "-Werror -I";
+    getcwd(options+strlen(options),2048-strlen(options));
     cl_program program = clCreateProgramWithSource(opencl_context,1,&source_p,0,0);
-    int status = clBuildProgram(program,0,0,"-Werror",0,0);
+    int status = clBuildProgram(program,0,0,options,0,0);
     if (status!=CL_SUCCESS) {
         assert(status==CL_BUILD_PROGRAM_FAILURE);
         cerr<<"error: failed to build opencl code"<<endl;
-        for (size_t i = 0; i < opencl_devices.size(); i++) {
+        for (size_t i = 0; i < devices.size(); i++) {
             size_t len;
-            clGetProgramBuildInfo(program,opencl_devices[i],CL_PROGRAM_BUILD_LOG,0,0,&len);
+            clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,0,0,&len);
             string log(len+1,0);
-            clGetProgramBuildInfo(program,opencl_devices[i],CL_PROGRAM_BUILD_LOG,len,&log[0],0);
+            clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,len,&log[0],0);
             cerr<<"device "<<i<<":\n"<<log<<flush;
         }
         exit(1);
     }
 
     // Set up each device
-    compare_cards_kernel.resize(opencl_devices.size());
-    opencl_five_subsets.resize(opencl_devices.size());
-    opencl_free.resize(opencl_devices.size());
-    opencl_results.resize(opencl_devices.size());
-    for (size_t i = 0; i < opencl_devices.size(); i++) {
-        // Make the kernel
-        compare_cards_kernel[i] = clCreateKernel(program,"compare_cards_kernel",0);
+    for (size_t i = 0; i < devices.size(); i++) {
+        device_t& d = devices.at(i);
+        // Make the kernels
+        d.score_hands = clCreateKernel(program,"score_hands_kernel",0);
+        d.compare_cards = clCreateKernel(program,"compare_cards_kernel",0);
         // Allocate device arrays
-        opencl_five_subsets[i] = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY|CL_MEM_COPY_HOST_PTR,sizeof(five_subsets),five_subsets,0);
-        opencl_free[i] = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY,48*sizeof(cards_t),0,0);
-        opencl_results[i] = clCreateBuffer(opencl_context,CL_MEM_WRITE_ONLY,sizeof(uint64_t)*NUM_FIVE_SUBSETS/BLOCK_SIZE,0,0);
+        assert(max_cards*sizeof(score_t)<=result_space);
+        d.cards = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY,max_cards*sizeof(cards_t),0,0);
+        d.five_subsets = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY|CL_MEM_COPY_HOST_PTR,sizeof(five_subsets),five_subsets,0);
+        d.free = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY,48*sizeof(cards_t),0,0);
+        d.results = clCreateBuffer(opencl_context,CL_MEM_WRITE_ONLY,result_space,0,0);
         // Set constant parameters
-        clSetKernelArg(compare_cards_kernel[i],0,sizeof(cl_mem),(void*)&opencl_five_subsets[i]);
-        clSetKernelArg(compare_cards_kernel[i],1,sizeof(cl_mem),(void*)&opencl_free[i]);
-        clSetKernelArg(compare_cards_kernel[i],2,sizeof(cl_mem),(void*)&opencl_results[i]);
+        clSetKernelArg(d.score_hands,0,sizeof(cl_mem),(void*)&d.cards);
+        clSetKernelArg(d.score_hands,1,sizeof(cl_mem),(void*)&d.results);
+        clSetKernelArg(d.compare_cards,0,sizeof(cl_mem),(void*)&d.five_subsets);
+        clSetKernelArg(d.compare_cards,1,sizeof(cl_mem),(void*)&d.free);
+        clSetKernelArg(d.compare_cards,2,sizeof(cl_mem),(void*)&d.results);
     }
 }
 
+// Score a bunch of hands in parallel using OpenCL
+void score_hands_opencl(size_t n, score_t* scores, const cards_t* cards) {
+    assert(n < max_cards);
+    const device_t& d = devices.at(0);
+    clEnqueueWriteBuffer(d.queue,d.cards,CL_TRUE,0,n*sizeof(cards_t),cards,0,0,0);
+    clEnqueueNDRangeKernel(d.queue,d.score_hands,1,0,&n,0,0,0,0);
+    clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,n*sizeof(score_t),scores,0,0,0);
+}
+
 // Process all five subsets in parallel using OpenCL
-inline uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
-    assert(device < opencl_devices.size());
+uint64_t compare_cards_opencl(cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
+    const device_t& d = devices.at(0);
     // Set cards
-    clSetKernelArg(compare_cards_kernel[device],3,sizeof(cards_t),&alice_cards);
-    clSetKernelArg(compare_cards_kernel[device],4,sizeof(cards_t),&bob_cards);
+    clSetKernelArg(d.compare_cards,3,sizeof(cards_t),&alice_cards);
+    clSetKernelArg(d.compare_cards,4,sizeof(cards_t),&bob_cards);
     // Copy free to device
-    clEnqueueWriteBuffer(opencl_queues[device],opencl_free[device],CL_TRUE,0,48*sizeof(cards_t),free,0,0,0);
+    clEnqueueWriteBuffer(d.queue,d.free,CL_TRUE,0,48*sizeof(cards_t),free,0,0,0);
     // Compute
     const size_t n = NUM_FIVE_SUBSETS/BLOCK_SIZE;
-    clEnqueueNDRangeKernel(opencl_queues[device],compare_cards_kernel[device],1,0,&n,0,0,0,0);
+    //const size_t n = (NUM_FIVE_SUBSETS+BLOCK_SIZE-1)/BLOCK_SIZE;
+    clEnqueueNDRangeKernel(d.queue,d.compare_cards,1,0,&n,0,0,0,0);
     // Read back results and sum
     vector<uint64_t> results(n);
-    clEnqueueReadBuffer(opencl_queues[device],opencl_results[device],CL_TRUE,0,sizeof(uint64_t)*n,&results[0],0,0,0);
+    clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,sizeof(uint64_t)*n,&results[0],0,0,0);
     uint64_t sum = 0;
     for (size_t i = 0; i < n; i++)
         sum += results[i];
-    // Fill in missed computations
-    for (size_t i = n*BLOCK_SIZE; i < NUM_FIVE_SUBSETS; i++)
-        sum += compare_cards(alice_cards,bob_cards,free,five_subsets[i]);
+
+    // Fill in missing entries
+    const size_t missing = NUM_FIVE_SUBSETS-n*BLOCK_SIZE;
+    cards_t cards[2*missing];
+    for (size_t i = 0; i < missing; i++) {
+        const cards_t shared = free_set(free,five_subsets[n*BLOCK_SIZE+i]);
+        cards[2*i+0] = alice_cards|shared;
+        cards[2*i+1] = bob_cards|shared;
+    }
+    score_t scores[2*missing];
+    score_hands_opencl(2*missing,scores,cards);
+    for (size_t i = 0; i < missing; i++) {
+        const score_t alice_score = scores[2*i+0], bob_score = scores[2*i+1];
+        sum += alice_score>bob_score?(uint64_t)1<<32:alice_score<bob_score?1u:0;
+    }
     return sum;
 }
 
@@ -322,8 +380,8 @@ outcomes_t compare_hands(hand_t alice, hand_t bob) {
                         free[i++] = cards_t(1)<<c;
                 // Consider all possible sets of shared cards
                 total += NUM_FIVE_SUBSETS;
-                if (opencl_devices.size())
-                    wins += compare_cards_opencl(0, alice_cards, bob_cards, free);
+                if (devices.size())
+                    wins += compare_cards_opencl(alice_cards, bob_cards, free);
                 else
                     wins += compare_cards_openmp(alice_cards, bob_cards, free);
             }
@@ -402,7 +460,10 @@ void test_score_hand() {
         {"AhJc","6hKh","2h3h4h5h5d",STRAIGHT_FLUSH,STRAIGHT_FLUSH,Bob}, // the steel wheel is the lowest straight flush
         {"7d8h","7h2c","2h3h4h5h6h",STRAIGHT_FLUSH,STRAIGHT_FLUSH,Bob}, // higher straight flush beats higher flush and straight
     };
+    size_t n = sizeof(tests)/sizeof(test_t);
 
+    // Collect hands to score
+    cards_t cards[2*n];
     for (size_t i = 0; i < sizeof(tests)/sizeof(test_t); i++) {
         const cards_t alice  = read_cards(tests[i].alice),
                       bob    = read_cards(tests[i].bob),
@@ -411,8 +472,18 @@ void test_score_hand() {
             cout<<"test "<<tests[i].alice<<' '<<tests[i].bob<<' '<<tests[i].shared<<" has duplicated cards"<<endl;
             exit(1);
         }
-        const score_t alice_score = score_hand(alice|shared),
-                      bob_score   = score_hand(bob|shared),
+        cards[2*i+0] = alice|shared;
+        cards[2*i+1] = bob|shared;
+    }
+
+    // Score them
+    score_t scores[2*n];
+    score_hands_opencl(2*n,scores,cards);
+
+    // Check results
+    for (size_t i = 0; i < sizeof(tests)/sizeof(test_t); i++) {
+        const score_t alice_score = scores[2*i+0],
+                      bob_score   = scores[2*i+1],
                       alice_type  = alice_score&TYPE_MASK,
                       bob_type    = bob_score&TYPE_MASK;
         const char* result = alice_score>bob_score?Alice:alice_score<bob_score?Bob:tie;
@@ -430,6 +501,7 @@ void regression_test_score_hand(size_t multiple) {
     const size_t m = 1<<17, n = multiple<<10;
     cout<<"score test: scoring "<<m*n<<" hands"<<endl;
     vector<size_t> hashes(m);
+#if USE_OPENMP
     #pragma omp parallel for
     for (size_t i = 0; i < m; i++) {
         for (size_t j = 0; j < n; j++) {
@@ -446,6 +518,30 @@ void regression_test_score_hand(size_t multiple) {
         }
     }
     cout << endl;
+#else
+    vector<size_t> offsets(1024+1);
+    vector<cards_t> cards(1024*n);
+    vector<score_t> scores(1024*n);
+    for (size_t i = 0; i < m/1024; i++) {
+        size_t count = 0;
+        offsets[0] = 0;
+        for (size_t ii = 0; ii < 1024; ii++) {
+            for (size_t j = 0; j < n; j++) {
+                cards_t c = 0;
+                for (int k = 0; k < 7; k++)
+                    c |= cards_t(1)<<hash(i*1024+ii,j,k)%52;
+                if (popcount(c)<7)
+                    continue;
+                cards[count++] = c;
+            }
+            offsets[ii+1] = count;
+        }
+        score_hands_opencl(count,&scores[0],&cards[0]);
+        for (size_t ii = 0; ii < 1024; ii++)
+            for (size_t j = offsets[ii]; j < offsets[ii+1]; j++)
+                hashes[i*1024+ii] = hash(hashes[i*1024+ii],hash(scores[j]));
+    }
+#endif
 
     // Merge hashes
     uint64_t merged = 0;
@@ -512,9 +608,11 @@ int main(int argc, const char** argv) {
     compute_five_subsets();
     compute_hands();
     initialize_opencl(true);
+#if USE_OPENMP
     int threads = omp_get_max_threads();
     if (threads>1)
         cerr<<"using "<<threads<<" threads with openmp"<<endl;
+#endif
 
     // Run a few tests
     test_score_hand();

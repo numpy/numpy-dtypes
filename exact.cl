@@ -1,30 +1,6 @@
 // Kernel code for exact poker winning probabilities
 
-#ifdef __OPENCL_VERSION__
-typedef uint uint32_t;
-typedef ulong uint64_t;
-#else
-#include <stdint.h>
-#define __global
-#define __kernel
-#define get_global_id(i) 0
-#endif
-
-// A 52-entry bit set representing the cards in a hand, in suit-value major order
-typedef uint64_t cards_t;
-
-// A 32-bit integer representing the value of a 7 card hand
-typedef uint32_t score_t;
-
-// To make parallelization easy, we precompute the set of 5 element subsets of 48 elements.
-struct five_subset_t {
-    unsigned i0 : 6;
-    unsigned i1 : 6;
-    unsigned i2 : 6;
-    unsigned i3 : 6;
-    unsigned i4 : 6;
-};
-#define NUM_FIVE_SUBSETS 1712304
+#include "exact.h"
 
 // OpenCL whines if we don't have prototypes
 inline score_t min_bit(score_t x);
@@ -51,18 +27,6 @@ inline score_t drop_bit(score_t x) {
 inline score_t drop_two_bits(score_t x) {
     return drop_bit(drop_bit(x));
 }
-
-#define HIGH_CARD      (1<<27)
-#define PAIR           (2<<27)
-#define TWO_PAIR       (3<<27)
-#define TRIPS          (4<<27)
-#define STRAIGHT       (5<<27)
-#define FLUSH          (6<<27)
-#define FULL_HOUSE     (7<<27)
-#define QUADS          (8<<27)
-#define STRAIGHT_FLUSH (9<<27)
-
-#define TYPE_MASK score_t(0xffff<<27)
 
 // Count the number of cards in each suit in parallel
 inline cards_t count_suits(cards_t cards) {
@@ -165,18 +129,23 @@ score_t score_hand(cards_t cards) {
 
 // Evaluate a full set of hands and shared cards
 inline uint64_t compare_cards(cards_t alice_cards, cards_t bob_cards, __global const cards_t* free, struct five_subset_t set) {
-    const cards_t shared_cards = free[set.i0]|free[set.i1]|free[set.i2]|free[set.i3]|free[set.i4];
+    const cards_t shared_cards = free_set(free,set);
     const score_t alice_score = score_hand(shared_cards|alice_cards),
                   bob_score   = score_hand(shared_cards|bob_cards);
     return alice_score>bob_score?(uint64_t)1<<32:alice_score<bob_score?1u:0;
 }
 
-#define BLOCK_SIZE 256
+// Score a bunch of hands
+__kernel void score_hands_kernel(__global const cards_t* cards, __global score_t* results) {
+    const int id = get_global_id(0);
+    results[id] = score_hand(cards[id]);
+}
 
-// The toplevel OpenCL kernel
+// Given Alice's and Bob's hands, determine outcomes for one block of shared cards
 __kernel void compare_cards_kernel(__global const struct five_subset_t* five_subsets, __global const cards_t* free, __global uint64_t* results, const cards_t alice_cards, const cards_t bob_cards) {
     const int id = get_global_id(0);
     const int offset = id*BLOCK_SIZE;
+    //const int bound = min(BLOCK_SIZE,NUM_FIVE_SUBSETS-offset);
     uint64_t sum = 0;
     for (int i = 0; i < BLOCK_SIZE; i++)
         sum += compare_cards(alice_cards,bob_cards,free,five_subsets[offset+i]);

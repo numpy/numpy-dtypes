@@ -1,7 +1,7 @@
 all: exact preflop-matchups.txt
 
 CXX = g++-mp-4.5
-CXXFLAGS = -Wall -Wunused -std=c++0x -O3 -funroll-loops -march=core2 -fopenmp -framework OpenCL
+CXXFLAGS = -Wall -Wunused -std=c++0x -O3 -funroll-loops -march=core2 -framework OpenCL
 
 preflop-matchups.txt:
 	wget http://www.pokerstove.com/analysis/preflop-matchups.txt.gz
@@ -10,7 +10,7 @@ preflop-matchups.txt:
 exact.txt: exact
 	./exact all | tee $@
 
-exact: exact.cpp exact.cl
+exact: exact.cpp exact.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 %.E: %.cpp

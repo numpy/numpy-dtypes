@@ -8,7 +8,8 @@ inline score_t drop_two_bits(score_t x);
 inline cards_t count_suits(cards_t cards);
 inline uint32_t cards_with_suit(cards_t cards, cards_t suits);
 inline score_t all_straights(score_t unique);
-inline score_t max_bit(score_t x, int n);
+inline score_t max_bit2(score_t x);
+inline score_t max_bit3(score_t x);
 score_t score_hand(cards_t cards);
 inline uint64_t compare_cards(cards_t alice_cards, cards_t bob_cards, __global const cards_t* free, struct five_subset_t set);
 inline cards_t mostly_random_set(uint64_t r);
@@ -49,11 +50,23 @@ inline score_t all_straights(score_t unique) {
     return (u&u>>2&unique>>3)|((unique&wheel)==wheel);
 }
 
-// Find the maximum bit set of x, assuming x has at most n bits set, where n <= 3
-inline score_t max_bit(score_t x, int n) {
-    if (n>1 && x!=min_bit(x)) x -= min_bit(x);
-    if (n>2 && x!=min_bit(x)) x -= min_bit(x);
-    return x;
+// Non-branching ternary operators.  All the 0* stuff is to make overload resolution work.  It should disappear at compile time.
+#define if_nz(c,a,b) select((a),(b),0*(a)+isequal((c),0*(c)))
+#define if_eq(x,y,a,b) select((b),(a),0*(a)+isequal((x),(y)))
+#define if_ne(x,y,a,b) select((b),(a),0*(a)+isnotequal((x),(y)))
+#define if_gt(x,y,a,b) select((b),(a),0*(a)+isgreater((x),(y)))
+#define if_nz1(c,a) if_nz(c,a,0*(a))
+#define if_ne1(x,y,a) if_ne(x,y,a,0*(a))
+
+// Find the maximum bit set of x, assuming x has at most 2 bit sets
+inline score_t max_bit2(score_t x) {
+    score_t m = min_bit(x);
+    return if_eq(x,m,x,x-m);
+}
+
+// Find the maximum bit set of x, assuming x has at most 3 bit sets
+inline score_t max_bit3(score_t x) {
+    return max_bit2(max_bit2(x));
 }
 
 // Determine the best possible five card hand out of a bit set of seven cards
@@ -65,60 +78,48 @@ score_t score_hand(cards_t cards) {
     // Check for straight flushes
     const cards_t suits = count_suits(cards);
     const cards_t flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
-    if (flushes) {
-        const score_t straight_flushes = all_straights(cards_with_suit(cards,flushes));
-        if (straight_flushes)
-            return SCORE(STRAIGHT_FLUSH,0,max_bit(straight_flushes,3));
-    }
+    const score_t straight_flushes = all_straights(cards_with_suit(cards,flushes));
+    score_t score = if_nz1(straight_flushes,SCORE(STRAIGHT_FLUSH,0,max_bit3(straight_flushes)));
 
     // Check for four of a kind
     const score_t cand = cards&cards>>26;
     const score_t cor  = (cards|cards>>26)&each_card*(1+(1<<13));
     const score_t quads = cand&cand>>13;
     const score_t unique = each_card&(cor|cor>>13);
-    if (quads)
-        return SCORE(QUADS,quads,max_bit(unique-quads,3));
+    score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit3(unique-quads))));
 
     // Check for a full house
     const score_t trips = (cand&cor>>13)|(cor&cand>>13);
     const score_t pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
-    if (trips) {
-        if (pairs) // If there are pairs, there can't be two kinds of trips
-            return SCORE(FULL_HOUSE,trips,max_bit(pairs,2));
-        else if (trips!=min_bit(trips)) // Two kind of trips: use only two of the lower one
-            return SCORE(FULL_HOUSE,trips-min_bit(trips),min_bit(trips));
-    }
+    const score_t min_trips = min_bit(trips);
+    score = max(score,if_nz1(trips,
+        if_nz(pairs,SCORE(FULL_HOUSE,trips,max_bit2(pairs)), // If there are pairs, there can't be two kinds of trips
+        if_ne1(trips,min_trips,SCORE(FULL_HOUSE,trips-min_trips,min_trips))))); // Two kind of trips: use only two of the lower one
 
     // Check for flushes
-    if (flushes) {
-        const int count = cards_with_suit(suits,flushes);
-        score_t best = cards_with_suit(cards,flushes);
-        if (count>5) best -= min_bit(best);
-        if (count>6) best -= min_bit(best);
-        return SCORE(FLUSH,0,best);
-    }
+    const int suit_count = cards_with_suit(suits,flushes);
+    score_t suited = cards_with_suit(cards,flushes);
+    suited = if_gt(suit_count,5u,suited-min_bit(suited),suited);
+    suited = if_gt(suit_count,6u,suited-min_bit(suited),suited);
+    score = max(score,if_nz1(flushes,SCORE(FLUSH,0,suited)));
 
     // Check for straights
     const score_t straights = all_straights(unique);
-    if (straights)
-        return SCORE(STRAIGHT,0,max_bit(straights,3));
+    score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit3(straights))));
 
     // Check for three of a kind
-    if (trips)
-        return SCORE(TRIPS,trips,drop_two_bits(unique-trips));
+    score = max(score,if_nz1(trips,SCORE(TRIPS,trips,drop_two_bits(unique-trips))));
 
     // Check for pair or two pair
-    if (pairs) {
-        if (pairs==min_bit(pairs))
-            return SCORE(PAIR,pairs,drop_two_bits(unique-pairs));
-        const cards_t high_pairs = drop_bit(pairs);
-        if (high_pairs==min_bit(high_pairs))
-            return SCORE(TWO_PAIR,pairs,drop_two_bits(unique-pairs));
-        return SCORE(TWO_PAIR,high_pairs,drop_bit(unique-high_pairs));
-    }
+    const score_t high_pairs = drop_bit(pairs);
+    score = max(score,if_nz1(pairs,
+        if_eq(pairs,min_bit(pairs),SCORE(PAIR,pairs,drop_two_bits(unique-pairs)),
+        if_eq(high_pairs,min_bit(high_pairs),SCORE(TWO_PAIR,pairs,drop_two_bits(unique-pairs)),
+        SCORE(TWO_PAIR,high_pairs,drop_bit(unique-high_pairs))))));
 
     // Nothing interesting happened, so high cards win
-    return SCORE(HIGH_CARD,0,drop_two_bits(unique));
+    score = max(score,SCORE(HIGH_CARD,0,drop_two_bits(unique)));
+    return score;
     #undef SCORE
 }
 
@@ -127,7 +128,8 @@ inline uint64_t compare_cards(cards_t alice_cards, cards_t bob_cards, __global c
     const cards_t shared_cards = free_set(free,set);
     const score_t alice_score = score_hand(shared_cards|alice_cards),
                   bob_score   = score_hand(shared_cards|bob_cards);
-    return alice_score>bob_score?(uint64_t)1<<32:alice_score<bob_score?1u:0;
+    return if_gt(alice_score,bob_score,(uint64_t)1<<32,
+           if_gt(bob_score,alice_score,(uint64_t)1,(uint64_t)0));
 }
 
 // Score a bunch of hands
@@ -151,8 +153,8 @@ inline cards_t mostly_random_set(uint64_t r) {
     cards_t cards = 0;
     #define ADD(a) \
         int i##a = (r>>(6*a)&0x3f)%52; \
-        cards_t b##a = (cards_t)1<<i##a; \
-        cards |= cards&b##a?min_bit(~cards):b##a;
+        const cards_t b##a = (cards_t)1<<i##a; \
+        cards |= if_ne(cards&b##a,(cards_t)0,min_bit(~cards),b##a);
     ADD(0) ADD(1) ADD(2) ADD(3) ADD(4) ADD(5) ADD(6)
     #undef ADD
     return cards;

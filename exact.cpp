@@ -9,12 +9,14 @@
 #include "exact.h"
 
 using std::ostream;
+using std::cin;
 using std::cout;
 using std::cerr;
 using std::endl;
 using std::flush;
 using std::vector;
 using std::string;
+using std::min;
 using std::max;
 
 namespace {
@@ -84,43 +86,6 @@ struct hand_t {
     }
 };
 
-// From Thomas Wang, http://www.concentric.net/~ttwang/tech/inthash.htm
-inline uint64_t hash(uint64_t k) {
-    k = (~k)+(k<<21);
-    k = k^(k>>24);
-    k = (k+(k<<3))+(k<<8);
-    k = k^(k>>14);
-    k = (k+(k<<2))+(k<<4);
-    k = k^(k>>28);
-    k = k+(k<<31);
-    return k;
-}
-
-// From http://burtleburtle.net/bob/c/lookup8.c
-inline uint64_t hash(uint64_t a, uint64_t b, uint64_t c) {
-    a -= b; a -= c; a ^= c>>43;
-    b -= c; b -= a; b ^= a<<9;
-    c -= a; c -= b; c ^= b>>8;
-    a -= b; a -= c; a ^= c>>38;
-    b -= c; b -= a; b ^= a<<23;
-    c -= a; c -= b; c ^= b>>5;
-    a -= b; a -= c; a ^= c>>35;
-    b -= c; b -= a; b ^= a<<49;
-    c -= a; c -= b; c ^= b>>11;
-    a -= b; a -= c; a ^= c>>12;
-    b -= c; b -= a; b ^= a<<18;
-    c -= a; c -= b; c ^= b>>22;
-    return c;
-}
-
-inline uint64_t hash(uint64_t a, uint64_t b) {
-    return hash(hash(0),a,b);
-}
-
-inline uint64_t hash(uint32_t k) {
-    return hash(uint64_t(k));
-}
-
 inline uint64_t popcount(uint64_t x) {
     return __builtin_popcountl(x);
 }
@@ -186,10 +151,11 @@ struct device_t {
     cl_mem five_subsets;
     cl_mem free;
     cl_mem results;
+    cl_kernel hash_scores;
 };
 vector<device_t> devices;
 
-const size_t max_cards = 1<<20;
+const size_t max_cards = 20<<17;
 const size_t result_space = max(sizeof(score_t)*max_cards,sizeof(uint64_t)*NUM_FIVE_SUBSETS/BLOCK_SIZE);
 
 void initialize_opencl(bool gpu_only, bool verbose=true) {
@@ -258,6 +224,7 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
         // Make the kernels
         d.score_hands = clCreateKernel(program,"score_hands_kernel",0);
         d.compare_cards = clCreateKernel(program,"compare_cards_kernel",0);
+        d.hash_scores = clCreateKernel(program,"hash_scores_kernel",0);
         // Allocate device arrays
         assert(max_cards*sizeof(score_t)<=result_space);
         d.cards = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY,max_cards*sizeof(cards_t),0,0);
@@ -270,16 +237,33 @@ void initialize_opencl(bool gpu_only, bool verbose=true) {
         clSetKernelArg(d.compare_cards,0,sizeof(cl_mem),(void*)&d.five_subsets);
         clSetKernelArg(d.compare_cards,1,sizeof(cl_mem),(void*)&d.free);
         clSetKernelArg(d.compare_cards,2,sizeof(cl_mem),(void*)&d.results);
+        clSetKernelArg(d.hash_scores,0,sizeof(cl_mem),(void*)&d.results);
     }
 }
 
 // Score a bunch of hands in parallel using OpenCL
 void score_hands_opencl(size_t n, score_t* scores, const cards_t* cards) {
-    assert(n < max_cards);
+    assert(n <= max_cards);
     const device_t& d = devices.at(0);
     clEnqueueWriteBuffer(d.queue,d.cards,CL_TRUE,0,n*sizeof(cards_t),cards,0,0,0);
     clEnqueueNDRangeKernel(d.queue,d.score_hands,1,0,&n,0,0,0,0);
     clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,n*sizeof(score_t),scores,0,0,0);
+}
+
+// Hash a bunch of hands in parallel using OpenCL
+void hash_scores_opencl(size_t n, uint64_t* hashes) {
+    assert(sizeof(uint64_t)*n <= result_space);
+    const device_t& d = devices.at(0);
+    const size_t batch = 1<<14;
+    for (size_t i = 0; i < n; i += batch) {
+        size_t count = min(batch,n-i);
+        clSetKernelArg(d.hash_scores,1,sizeof(uint64_t),&i);
+        clEnqueueNDRangeKernel(d.queue,d.hash_scores,1,0,&count,0,0,0,0);
+        clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,count*sizeof(uint64_t),hashes+i,0,0,0);
+        if ((n/batch)%max(size_t(1),n/batch/1024)==0)
+            cout<<'.'<<flush;
+    }
+    cout<<endl;
 }
 
 // Process all five subsets in parallel using OpenCL
@@ -454,41 +438,31 @@ void test_score_hand() {
     }
 }
 
+inline cards_t mostly_random_set(uint64_t r) {
+    cards_t cards = 0;
+    #define ADD(a) \
+        int i##a = (r>>(6*a)&0x3f)%52; \
+        cards_t b##a = (cards_t)1<<i##a; \
+        cards |= cards&b##a?min_bit(~cards):b##a;
+    ADD(0) ADD(1) ADD(2) ADD(3) ADD(4) ADD(5) ADD(6)
+    assert(popcount(cards)==7);
+    return cards;
+}
+
 void regression_test_score_hand(size_t multiple) {
     // Score a large number of hands
-    const size_t m = 1<<17, n = multiple<<10;
+    const size_t m = multiple<<17, n = 1<<10;
     cout<<"score test: scoring "<<m*n<<" hands"<<endl;
-    vector<size_t> hashes(m);
-    vector<size_t> offsets(1024+1);
-    vector<cards_t> cards(1024*n);
-    vector<score_t> scores(1024*n);
-    for (size_t i = 0; i < m/1024; i++) {
-        size_t count = 0;
-        offsets[0] = 0;
-        for (size_t ii = 0; ii < 1024; ii++) {
-            for (size_t j = 0; j < n; j++) {
-                cards_t c = 0;
-                for (int k = 0; k < 7; k++)
-                    c |= cards_t(1)<<hash(i*1024+ii,j,k)%52;
-                if (popcount(c)<7)
-                    continue;
-                cards[count++] = c;
-            }
-            offsets[ii+1] = count;
-        }
-        score_hands_opencl(count,&scores[0],&cards[0]);
-        for (size_t ii = 0; ii < 1024; ii++)
-            for (size_t j = offsets[ii]; j < offsets[ii+1]; j++)
-                hashes[i*1024+ii] = hash(hashes[i*1024+ii],hash(scores[j]));
-    }
+    vector<uint64_t> hashes(m);
+    hash_scores_opencl(m,&hashes[0]);
 
     // Merge hashes
     uint64_t merged = 0;
     for (uint64_t i = 0; i < m; i++)
-        merged = hash(merged,hashes[i]);
+        merged = hash2(merged,hashes[i]);
 
-    const uint64_t expected = multiple==1 ?0x10aebbab7697ed56:
-                              multiple==10?0xc9c781853cf4fe6a:0;
+    const uint64_t expected = multiple==1 ?0x014580e94b28f5ce:
+                              multiple==10?0xd4222a11207e32e9:0;
     if (merged!=expected) {
         cout<<"score test: expected 0x"<<std::hex<<expected<<", got 0x"<<merged<<std::dec<<endl;
         exit(1);
@@ -513,12 +487,12 @@ void regression_test_compare_hands(size_t n) {
     cout<<"compare test: comparing "<<n<<" random pairs of hands, including at least one matched pair"<<endl;
     uint64_t signature = 0;
     for (uint64_t i = 0; i < n; i++) {
-        hand_t alice =   hands[hash(i,0)%hands.size()],
-               bob   = i?hands[hash(i,1)%hands.size()]:alice;
+        hand_t alice =   hands[hash2(i,0)%hands.size()],
+               bob   = i?hands[hash2(i,1)%hands.size()]:alice;
         if (i) cout<<", ";
         cout<<alice<<" vs. "<<bob<<flush;
         outcomes_t o = compare_hands(alice,bob);
-        signature = hash(signature,hash(o.alice,o.bob,o.tie));
+        signature = hash2(signature,hash3(o.alice,o.bob,o.tie));
     }
     cout<<endl;
     const uint64_t expected = n==2 ?0xb034c27133337c71:

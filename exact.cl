@@ -3,7 +3,6 @@
 #include "exact.h"
 
 // OpenCL whines if we don't have prototypes
-inline score_t min_bit(score_t x);
 inline score_t drop_bit(score_t x);
 inline score_t drop_two_bits(score_t x);
 inline cards_t count_suits(cards_t cards);
@@ -12,11 +11,7 @@ inline score_t all_straights(score_t unique);
 inline score_t max_bit(score_t x, int n);
 score_t score_hand(cards_t cards);
 inline uint64_t compare_cards(cards_t alice_cards, cards_t bob_cards, __global const cards_t* free, struct five_subset_t set);
-
-// Extract the minimum bit, assuming a nonzero input
-inline score_t min_bit(score_t x) {
-    return x&-x;
-}
+inline cards_t mostly_random_set(uint64_t r);
 
 // Drop the lowest bit, assuming a nonzero input
 inline score_t drop_bit(score_t x) {
@@ -150,4 +145,24 @@ __kernel void compare_cards_kernel(__global const struct five_subset_t* five_sub
     for (int i = 0; i < BLOCK_SIZE; i++)
         sum += compare_cards(alice_cards,bob_cards,free,five_subsets[offset+i]);
     results[id] = sum;
+}
+
+inline cards_t mostly_random_set(uint64_t r) {
+    cards_t cards = 0;
+    #define ADD(a) \
+        int i##a = (r>>(6*a)&0x3f)%52; \
+        cards_t b##a = (cards_t)1<<i##a; \
+        cards |= cards&b##a?min_bit(~cards):b##a;
+    ADD(0) ADD(1) ADD(2) ADD(3) ADD(4) ADD(5) ADD(6)
+    #undef ADD
+    return cards;
+}
+
+// Hash a bunch of mostly random hand scores
+__kernel void hash_scores_kernel(__global uint64_t* results, const uint64_t offset) {
+    const int id = get_global_id(0), i = offset+id;
+    uint64_t h = 0;
+    for (int j = 0; j < 1024; j++)
+        h = hash2(h,score_hand(mostly_random_set(hash2(i,j))));
+    results[id] = h;
 }

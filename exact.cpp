@@ -1,16 +1,11 @@
 // Compute exact winning probabilities for all preflop holdem matchups
 
-#define USE_OPENMP 0
-
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <vector>
 #include <sys/stat.h>
 #include <OpenCL/opencl.h>
-#if USE_OPENMP
-#include <omp.h>
-#endif
 #include "exact.h"
 
 using std::ostream;
@@ -180,40 +175,6 @@ void compute_five_subsets() {
                     }
 }
 
-// Score a bunch of hands in parallel using OpenMP
-void score_hands_openmp(size_t n, score_t* scores, const cards_t* cards) {
-#if USE_OPENMP
-    #pragma omp parallel for
-    for (size_t i = 0; i < n; i++)
-        scores[i] = score_hand(cards[i]);
-#else
-    cerr<<"error: openmp support not enabled"<<endl;
-    exit(1);
-#endif
-}
-
-// Process all five subsets in parallel using OpenMP
-inline uint64_t compare_cards_openmp(cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
-#if USE_OPENMP
-    // Traverse all hands
-    const int threads = omp_get_max_threads();
-    uint64_t outcomes[threads];
-    memset(outcomes,0,sizeof(outcomes));
-    #pragma omp parallel for
-    for (size_t n = 0; n < NUM_FIVE_SUBSETS; n++)
-        outcomes[omp_get_thread_num()] += compare_cards(alice_cards,bob_cards,free,five_subsets[n]);
-
-    // Sum results
-    uint64_t sum = 0;
-    for (int t = 0; t < threads; t++)
-        sum += outcomes[t];
-    return sum;
-#else
-    cerr<<"error: openmp support not enabled"<<endl;
-    exit(1);
-#endif
-}
-
 // OpenCL information
 cl_context opencl_context;
 struct device_t {
@@ -380,10 +341,7 @@ outcomes_t compare_hands(hand_t alice, hand_t bob) {
                         free[i++] = cards_t(1)<<c;
                 // Consider all possible sets of shared cards
                 total += NUM_FIVE_SUBSETS;
-                if (devices.size())
-                    wins += compare_cards_opencl(alice_cards, bob_cards, free);
-                else
-                    wins += compare_cards_openmp(alice_cards, bob_cards, free);
+                wins += compare_cards_opencl(alice_cards, bob_cards, free);
             }
     // Done
     outcomes_t o;
@@ -501,24 +459,6 @@ void regression_test_score_hand(size_t multiple) {
     const size_t m = 1<<17, n = multiple<<10;
     cout<<"score test: scoring "<<m*n<<" hands"<<endl;
     vector<size_t> hashes(m);
-#if USE_OPENMP
-    #pragma omp parallel for
-    for (size_t i = 0; i < m; i++) {
-        for (size_t j = 0; j < n; j++) {
-            cards_t cards = 0;
-            for (int k = 0; k < 7; k++)
-                cards |= cards_t(1)<<hash(i,j,k)%52;
-            if (popcount(cards)<7)
-                continue;
-            hashes[i] = hash(hashes[i],hash(score_hand(cards)));
-        }
-        if (i%1024==0) {
-            #pragma omp critical
-            cout<<'.'<<flush;
-        }
-    }
-    cout << endl;
-#else
     vector<size_t> offsets(1024+1);
     vector<cards_t> cards(1024*n);
     vector<score_t> scores(1024*n);
@@ -541,7 +481,6 @@ void regression_test_score_hand(size_t multiple) {
             for (size_t j = offsets[ii]; j < offsets[ii+1]; j++)
                 hashes[i*1024+ii] = hash(hashes[i*1024+ii],hash(scores[j]));
     }
-#endif
 
     // Merge hashes
     uint64_t merged = 0;
@@ -608,11 +547,6 @@ int main(int argc, const char** argv) {
     compute_five_subsets();
     compute_hands();
     initialize_opencl(true);
-#if USE_OPENMP
-    int threads = omp_get_max_threads();
-    if (threads>1)
-        cerr<<"using "<<threads<<" threads with openmp"<<endl;
-#endif
 
     // Run a few tests
     test_score_hand();

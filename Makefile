@@ -12,6 +12,10 @@ exact: exact.cpp score.h
 %.E: %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ -E $^
 
-.PHONY: clean
+.PHONY: clean test
+
+test: exact score.cl
+	time ./exact test
+
 clean:
 	rm -f exact *.o *.E

@@ -9,12 +9,11 @@ import cvxopt
 import cvxopt.solvers
 from fractions import Fraction
 
-usage = "usage: %prog [-c] [-C <dir>] [args...]"
+usage = "usage: %prog [options...] [args...]"
 parser = optparse.OptionParser(usage)
 parser.add_option('-b','--bet',type=float,default=0.,help='set a fixed bet level')
 parser.add_option('--plot',action='store_true',help="plot Alice's equity for bets in [0,bet]")
 parser.add_option('--max',action='store_true',help="maximize Alice's equity as a function of bet in [0,bet]")
-parser.add_option('--compare',action='store_true',help="compare exact hand probabilities against online approximates")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')

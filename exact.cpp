@@ -562,10 +562,14 @@ void regression_test_score_hand(size_t multiple) {
         merged = hash2(merged,hashes[i]);
 
     const uint64_t expected = multiple==1 ?0x014580e94b28f5ce:
+                              multiple==2 ?0xd1a032a5cb17fd93:
                               multiple==10?0xd4222a11207e32e9:0;
     if (merged!=expected) {
-        cout<<"score test: expected 0x"<<std::hex<<expected<<", got 0x"<<merged<<std::dec<<endl;
-        exit(1);
+        if (expected) {
+            cout<<"score test: expected 0x"<<std::hex<<expected<<", got 0x"<<merged<<std::dec<<endl;
+            exit(1);
+        } else
+            cout<<"score test: expected value for n = "<<multiple<<std::hex<<" not known, got 0x"<<merged<<std::dec<<endl;
     } else
         cout<<"score test passed!"<<endl;
 }
@@ -620,7 +624,7 @@ void regression_test_compare_hands(size_t n) {
     timer_t timer("test compare hands");
     cout<<"compare test: comparing "<<n<<" random pairs of hands, including at least one matched pair"<<endl;
     vector<hand_t> pairs;
-    for (uint64_t i = 0; i < n; i++) {
+    for (uint64_t i = 0; i <= n; i++) {
         hand_t alice =   hands[hash2(i,0)%hands.size()],
                bob   = i?hands[hash2(i,1)%hands.size()]:alice;
         pairs.push_back(alice);
@@ -628,22 +632,36 @@ void regression_test_compare_hands(size_t n) {
     }
     vector<outcomes_t> outcomes = compare_many_hands(pairs,false);
     uint64_t signature = 0;
-    for (uint64_t i = 0; i < n; i++) {
+    for (uint64_t i = 0; i <= n; i++) {
         outcomes_t o = outcomes[i];
         signature = hash2(signature,hash3(o.alice,o.bob,o.tie));
     }
     cout<<endl;
-    const uint64_t expected = n==2 ?0xb034c27133337c71:
-                              n==11?0x006c9a21c45a67b5:0;
+    const uint64_t expected = n==1 ?0xb034c27133337c71:
+                              n==2 ?0x80e493c487b72627:
+                              n==10?0x006c9a21c45a67b5:0;
     if (signature!=expected) {
-        cout<<"compare test: expected 0x"<<std::hex<<expected<<", got 0x"<<signature<<std::dec<<endl;
-        exit(1);
+        if (expected) {
+            cout<<"compare test: expected 0x"<<std::hex<<expected<<", got 0x"<<signature<<std::dec<<endl;
+            exit(1);
+        } else
+            cout<<"compare test: expected value for n = "<<n<<std::hex<<" not known, got 0x"<<signature<<std::dec<<endl;
     } else
         cout<<"compare test passed!"<<endl;
 }
 
 void usage(const char* program) {
-    cerr<<"usage: "<<program<<" hands|test|some|all"<<endl;
+    cerr<<"usage: "<<program<<" [options...] <command> [args...]\n"
+          "options:\n"
+          "  -a, --all      use all available OpenCL devices (GPUs and CPUs)\n"
+          "  -g, --gpu      use only GPUs\n"
+          "  -c, --cpu      use only CPUs\n"
+          "commands:\n"
+          "  hands          print list of two card hold'em hands\n"
+          "  test [n]       run some moderately expensive regression tests, with an optional size parameter\n"
+          "  some [n]       compute win/loss/tie probabilities for some random pairs of hands\n"
+          "  all            compute win/loss/tie probabilities for all pairs of hands\n"
+        <<flush;
 }
 
 } // unnamed namespace
@@ -698,7 +716,7 @@ int main(int argc, char** argv) {
     // Run more expensive tests
     else if (cmd=="test") {
         size_t m = argc<2?1:atoi(argv[1]);
-        regression_test_compare_hands(m+1);
+        regression_test_compare_hands(m);
         regression_test_score_hand(m);
     }
 

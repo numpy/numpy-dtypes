@@ -133,7 +133,7 @@ inline score_tv drop_two_bits(score_tv x) {
     return drop_bit(drop_bit(x));
 }
 
-// Count the number of cards in each suit in parallel (22 operations)
+// Count the number of cards in each suit in parallel (15 operations)
 inline cards_tv count_suits(cards_tv cards) {
     const cards_t suits = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
     cards_tv s = cards; // initially, each suit has 13 single bit chunks
@@ -204,13 +204,13 @@ inline score_tv max_bit(score_tv x) {
     return ((score_t)1<<31)>>clz(x);
 }
 
-// Determine the best possible five card hand out of a bit set of seven cards (49+19+31+30+18+13+41+10 = 211 operations)
+// Determine the best possible five card hand out of a bit set of seven cards (42+19+31+30+18+13+41+10 = 204 operations)
 score_tv score_hand(cards_tv cards) {
     #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1)) // 3 operations
     const score_t each_card = 0x1fff;
     const cards_t each_suit = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
 
-    // Check for straight flushes (22+5+10+7+3+2 = 49 operations)
+    // Check for straight flushes (15+5+10+7+3+2 = 42 operations)
     const cards_tv suits = count_suits(cards);
     const cards_tv flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
     const score_tv straight_flushes = all_straights(cards_with_suit(cards,flushes));

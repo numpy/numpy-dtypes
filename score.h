@@ -188,11 +188,10 @@ DEFINE_IFS(,uint32_tv)
 DEFINE_IFS(l,uint64_tv)
 #undef DEFINE_IFS
 
-// Find all straights in a (suited) set of cards, assuming cards == cards&0x1111111111111 (10 operations)
+// Find all straights in a (suited) set of cards, assuming cards == cards&0x1111111111111 (8 operations)
 inline score_tv all_straights(score_tv unique) {
-    const score_t wheel = (1<<12)|1|2|4|8;
-    const score_tv u = unique&unique<<1;
-    return (u&u>>2&unique>>3)|if_eq1(unique&wheel,wheel,(score_tv)1);
+    const score_tv u = unique&(unique<<1|unique>>12); // the ace wraps around to the bottom
+    return u&u>>2&unique>>3;
 }
 
 #ifndef __OPENCL_VERSION__
@@ -204,13 +203,13 @@ inline score_tv max_bit(score_tv x) {
     return ((score_t)1<<31)>>clz(x);
 }
 
-// Determine the best possible five card hand out of a bit set of seven cards (42+19+31+30+18+13+41+10 = 204 operations)
+// Determine the best possible five card hand out of a bit set of seven cards (40+19+31+30+16+13+41+10 = 200 operations)
 score_tv score_hand(cards_tv cards) {
     #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1)) // 3 operations
     const score_t each_card = 0x1fff;
     const cards_t each_suit = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
 
-    // Check for straight flushes (15+5+10+7+3+2 = 42 operations)
+    // Check for straight flushes (15+5+8+7+3+2 = 40 operations)
     const cards_tv suits = count_suits(cards);
     const cards_tv flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
     const score_tv straight_flushes = all_straights(cards_with_suit(cards,flushes));
@@ -238,7 +237,7 @@ score_tv score_hand(cards_tv cards) {
     suited = if_gt(suit_count,6u,suited-min_bit(suited),suited);
     score = max(score,if_nz1(suited,SCORE(FLUSH,0,suited)));
 
-    // Check for straights (10+1+2+3+2 = 18 operations)
+    // Check for straights (8+1+2+3+2 = 16 operations)
     const score_tv straights = all_straights(unique);
     score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit(straights))));
 

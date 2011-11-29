@@ -65,8 +65,7 @@ inline score_tv drop_two_bits(score_tv x);
 inline cards_tv count_suits(cards_tv cards);
 inline score_tv cards_with_suit(cards_tv cards, cards_tv suits);
 inline score_tv all_straights(score_tv unique);
-inline score_tv max_bit2(score_tv x);
-inline score_tv max_bit3(score_tv x);
+inline score_tv max_bit(score_tv x);
 score_tv score_hand(cards_tv cards);
 inline uint64_tv compare_cards(cards_t alice_cards, cards_t bob_cards, __global const cards_t* free, five_subset_tv set);
 inline cards_tv mostly_random_set(uint64_tv r);
@@ -196,42 +195,40 @@ inline score_tv all_straights(score_tv unique) {
     return (u&u>>2&unique>>3)|if_eq1(unique&wheel,wheel,(score_tv)1);
 }
 
-// Find the maximum bit set of x, assuming x has at most 2 bit sets (5 operations)
-inline score_tv max_bit2(score_tv x) {
-    score_tv m = min_bit(x);
-    return if_eq(x,m,x,x-m);
+#ifndef __OPENCL_VERSION__
+#define clz __builtin_clz
+#endif
+
+// Find the maximum bit set of x (2 operations)
+inline score_tv max_bit(score_tv x) {
+    return ((score_t)1<<31)>>clz(x);
 }
 
-// Find the maximum bit set of x, assuming x has at most 3 bit sets (10 operations)
-inline score_tv max_bit3(score_tv x) {
-    return max_bit2(max_bit2(x));
-}
-
-// Determine the best possible five card hand out of a bit set of seven cards (3+57+28+34+30+26+13+41+10 = 242 operations)
+// Determine the best possible five card hand out of a bit set of seven cards (49+19+31+30+18+13+41+10 = 211 operations)
 score_tv score_hand(cards_tv cards) {
     #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1)) // 3 operations
     const score_t each_card = 0x1fff;
     const cards_t each_suit = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
 
-    // Check for straight flushes (22+5+10+7+3+10 = 57 operations)
+    // Check for straight flushes (22+5+10+7+3+2 = 49 operations)
     const cards_tv suits = count_suits(cards);
     const cards_tv flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
     const score_tv straight_flushes = all_straights(cards_with_suit(cards,flushes));
-    score_tv score = if_nz1(straight_flushes,SCORE(STRAIGHT_FLUSH,0,max_bit3(straight_flushes)));
+    score_tv score = if_nz1(straight_flushes,SCORE(STRAIGHT_FLUSH,0,max_bit(straight_flushes)));
 
-    // Check for four of a kind (2+4+2+3+1+2+3+10+1 = 28 operations)
+    // Check for four of a kind (2+3+2+3+1+2+3+2+1 = 19 operations)
     const score_tv cand = convert_score(cards&cards>>26);
     const score_tv cor  = convert_score(cards|cards>>26)&each_card*(1+(1<<13));
     const score_tv quads = cand&cand>>13;
     const score_tv unique = each_card&(cor|cor>>13);
-    score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit3(unique-quads))));
+    score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit(unique-quads))));
 
-    // Check for a full house (5+8+2+1+2+2+3+5+2+3+1 = 34 operations)
+    // Check for a full house (5+8+2+1+2+2+3+2+2+3+1 = 31 operations)
     const score_tv trips = (cand&cor>>13)|(cor&cand>>13);
     const score_tv pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
     const score_tv min_trips = min_bit(trips);
     score = max(score,if_nz1(trips,
-        if_nz(pairs,SCORE(FULL_HOUSE,trips,max_bit2(pairs)), // If there are pairs, there can't be two kinds of trips
+        if_nz(pairs,SCORE(FULL_HOUSE,trips,max_bit(pairs)), // If there are pairs, there can't be two kinds of trips
         if_ne1(trips,min_trips,SCORE(FULL_HOUSE,trips-min_trips,min_trips))))); // Two kind of trips: use only two of the lower one
 
     // Check for flushes (7+7+2*(2+1+2)+1+2+3 = 30 operations)
@@ -241,9 +238,9 @@ score_tv score_hand(cards_tv cards) {
     suited = if_gt(suit_count,6u,suited-min_bit(suited),suited);
     score = max(score,if_nz1(suited,SCORE(FLUSH,0,suited)));
 
-    // Check for straights (10+1+2+3+10 = 26 operations)
+    // Check for straights (10+1+2+3+2 = 18 operations)
     const score_tv straights = all_straights(unique);
-    score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit3(straights))));
+    score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit(straights))));
 
     // Check for three of a kind (1+2+3+1+6 = 13 operations)
     score = max(score,if_nz1(trips,SCORE(TRIPS,trips,drop_two_bits(unique-trips))));

@@ -25,27 +25,6 @@ hands = [c+c for c in cards]+[h+'s' for h in nonpairs]+[h+'o' for h in nonpairs]
 assert len(hands)==13+13*12
 hand_id = dict((h,i) for (i,h) in enumerate(hands))
 
-# Load win probabilities of each hand vs. each other hand
-def parse_preflop_matchups():
-    pattern = re.compile(r'^(\w+)\s+vs\.\s+(\w+)\s+:\s+([\d.]+)\s+vs\.\s+([\d.]+)\s+$')
-    win = -ones((len(hands),)*2)
-    for line in open('preflop-matchups.txt'):
-        m = pattern.match(line)
-        assert m
-        h0 = hand_id[m.group(1)]
-        h1 = hand_id[m.group(2)]
-        w0 = float(m.group(3))
-        w1 = float(m.group(4))
-        assert abs(w0+w1-1)<1e-5
-        win[h0,h1] = w0
-        win[h1,h0] = 1-w0
-    i = arange(len(hands))
-    win[i,i] = .5
-    assert all(0<=win) and all(win<=1)
-    assert all(abs(win+win.T-1)<=1e-10)
-    return win
-win = parse_preflop_matchups()
-
 def die(s):
     print>>sys.stderr, s
     sys.exit(1)
@@ -75,6 +54,10 @@ def parse_exact_matchups():
         win[h1,h0] = l
     assert all(win>0)
     return win
+exact_win = parse_exact_matchups()
+win = exact_win.astype(float)
+win = win+(1-win-win.T)/2
+assert allclose(win+win.T,1)
 
 # Build a map from pairs of cards (represented as 4*id+suit) to hand ids
 def compute_cards_to_hand():
@@ -366,12 +349,6 @@ elif options.max:
     print "\nAlice's preferred bet = %g"%bet
     print "Alice's equity = %g"%-equity
     print "Nash equilibrium computations = %d"%evals
-elif options.compare:
-    exact = parse_exact_matchups()
-    exact = exact+(1-exact-exact.T)/2
-    assert all(exact+exact.T)==1
-    i = unravel_index(argmax(abs(exact.astype(float)-win)),win.shape)
-    print 'worse error: exact %s = %g, approx %g, error %g'%(exact[i],float(exact[i]),win[i],abs(float(exact[i])-win[i]))
 else:
     bet = options.bet
     equity,alice,bob = poker_nash_equilibrium(bet)

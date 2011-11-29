@@ -1,11 +1,7 @@
-all: exact preflop-matchups.txt
+all: exact
 
 CXX = g++
 CXXFLAGS = -Wall -Werror -O2 -framework OpenCL -fopenmp
-
-preflop-matchups.txt:
-	wget http://www.pokerstove.com/analysis/preflop-matchups.txt.gz
-	gunzip preflop-matchups.txt.gz
 
 exact.txt: exact score.cl
 	time ./exact all > $@

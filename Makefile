@@ -1,7 +1,7 @@
 all: exact preflop-matchups.txt
 
-CXX = g++-mp-4.5
-CXXFLAGS = -Wall -Wunused -std=c++0x -O3 -funroll-loops -march=core2 -framework OpenCL -fopenmp
+CXX = g++
+CXXFLAGS = -Wall -Werror -O2 -framework OpenCL -fopenmp
 
 preflop-matchups.txt:
 	wget http://www.pokerstove.com/analysis/preflop-matchups.txt.gz

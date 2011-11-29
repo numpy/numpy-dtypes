@@ -211,7 +211,7 @@ score_tv score_hand(cards_tv cards) {
 
     // Check for straight flushes (15+5+8+7+3+2 = 40 operations)
     const cards_tv suits = count_suits(cards);
-    const cards_tv flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
+    const cards_tv flushes = each_suit&suits>>2&(suits>>1|suits); // Detect suits with at least 5 cards
     const score_tv straight_flushes = all_straights(cards_with_suit(cards,flushes));
     score_tv score = if_nz1(straight_flushes,SCORE(STRAIGHT_FLUSH,0,max_bit(straight_flushes)));
 

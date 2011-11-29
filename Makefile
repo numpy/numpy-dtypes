@@ -8,7 +8,7 @@ preflop-matchups.txt:
 	gunzip preflop-matchups.txt.gz
 
 exact.txt: exact score.cl
-	time ./exact all | tee $@
+	time ./exact all > $@
 
 exact: exact.cpp score.h
 	$(CXX) $(CXXFLAGS) -o $@ $<

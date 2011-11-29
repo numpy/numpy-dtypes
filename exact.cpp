@@ -375,7 +375,7 @@ void hash_scores_opencl(size_t device, size_t n, uint64_t* hashes) {
 // Process all five subsets in parallel using OpenCL
 uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
     const device_t& d = devices.at(device);
-    // Set cards
+    // Set arguments
     {timer_t timer("set args");
     clSetKernelArg(d.compare_cards,3,sizeof(cards_t),&alice_cards);
     clSetKernelArg(d.compare_cards,4,sizeof(cards_t),&bob_cards);}
@@ -386,7 +386,8 @@ uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_ca
     const size_t n = NUM_FIVE_SUBSETS/BLOCK_SIZE;
     //const size_t n = (NUM_FIVE_SUBSETS+BLOCK_SIZE-1)/BLOCK_SIZE;
     {timer_t timer("compute");
-    clEnqueueNDRangeKernel(d.queue,d.compare_cards,1,0,&n,0,0,0,0);}
+    clEnqueueNDRangeKernel(d.queue,d.compare_cards,1,0,&n,0,0,0,0);
+    clFinish(d.queue);}
     // Read back results and sum
     vector<uint64_t> results(n);
     {timer_t timer("read results");
@@ -446,10 +447,10 @@ outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
 }
 
 void show_comparison(hand_t alice, hand_t bob,outcomes_t o) {
-    cout<<alice<<" vs. "<<bob<<':'<<endl;
-    cout<<"  Alice: "<<o.alice<<"/"<<o.total()<<" = "<<(double)o.alice/o.total()<<endl;
-    cout<<"  Bob:   "<<o.bob<<"/"<<o.total()<<" = "<<(double)o.bob/o.total()<<endl;
-    cout<<"  Tie:   "<<o.tie<<"/"<<o.total()<<" = "<<(double)o.tie/o.total()<<endl;
+    cout<<alice<<" vs. "<<bob<<":\n"
+          "  Alice: "<<o.alice<<"/"<<o.total()<<" = "<<(double)o.alice/o.total()
+        <<"\n  Bob:   "<<o.bob<<"/"<<o.total()<<" = "<<(double)o.bob/o.total()
+        <<"\n  Tie:   "<<o.tie<<"/"<<o.total()<<" = "<<(double)o.tie/o.total()<<endl;
     if (alice==bob && o.alice!=o.bob) {
         cerr<<"  Error: Identical hands should win equally often"<<endl;
         exit(1);

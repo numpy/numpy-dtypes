@@ -48,7 +48,7 @@ typedef uint32_tv five_subset_tv;
 
 #define BLOCK_SIZE 256
 
-// Extract the minimum bit, assuming a nonzero input
+// Extract the minimum bit, assuming a nonzero input (2 operations)
 #define min_bit(x) ((x)&-(x))
 
 // OpenCL whines if we don't have prototypes
@@ -124,17 +124,17 @@ inline uint64_tv hash2v(uint64_tv a, uint64_tv b) {
 }
 #endif
 
-// Drop the lowest bit, assuming a nonzero input
+// Drop the lowest bit, assuming a nonzero input (3 operations)
 inline score_tv drop_bit(score_tv x) {
     return x-min_bit(x);
 }
 
-// Drop the two lowest bits, assuming at least two bits set
+// Drop the two lowest bits, assuming at least two bits set (6 operations)
 inline score_tv drop_two_bits(score_tv x) {
     return drop_bit(drop_bit(x));
 }
 
-// Count the number of cards in each suit in parallel
+// Count the number of cards in each suit in parallel (22 operations)
 inline cards_tv count_suits(cards_tv cards) {
     const cards_t suits = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
     cards_tv s = cards; // initially, each suit has 13 single bit chunks
@@ -158,7 +158,7 @@ inline cards_tv count_suits(cards_tv cards) {
 #define select(a,b,c) ((c)?(b):(a))
 #endif
 
-// Given a set of cards and a set of suits, find the set of cards with that suit
+// Given a set of cards and a set of suits, find the set of cards with that suit (7 operations)
 inline score_tv cards_with_suit(cards_tv cards, cards_tv suits) {
     cards_tv c = cards&suits*0x1fff;
     c |= c>>13;
@@ -167,6 +167,7 @@ inline score_tv cards_with_suit(cards_tv cards, cards_tv suits) {
 }
 
 // Non-branching ternary operators.  All the 0* stuff is to make overload resolution work.  It should disappear at compile time.
+// I'm counting each of these as two operations.
 #define DEFINE_IFS(suffix,type) \
     inline type if_nz##suffix(type c, type a, type b); \
     inline type if_eq##suffix(type x, type y, type a, type b); \
@@ -188,44 +189,44 @@ DEFINE_IFS(,uint32_tv)
 DEFINE_IFS(l,uint64_tv)
 #undef DEFINE_IFS
 
-// Find all straights in a (suited) set of cards, assuming cards == cards&0x1111111111111
+// Find all straights in a (suited) set of cards, assuming cards == cards&0x1111111111111 (10 operations)
 inline score_tv all_straights(score_tv unique) {
     const score_t wheel = (1<<12)|1|2|4|8;
     const score_tv u = unique&unique<<1;
     return (u&u>>2&unique>>3)|if_eq1(unique&wheel,wheel,(score_tv)1);
 }
 
-// Find the maximum bit set of x, assuming x has at most 2 bit sets
+// Find the maximum bit set of x, assuming x has at most 2 bit sets (5 operations)
 inline score_tv max_bit2(score_tv x) {
     score_tv m = min_bit(x);
     return if_eq(x,m,x,x-m);
 }
 
-// Find the maximum bit set of x, assuming x has at most 3 bit sets
+// Find the maximum bit set of x, assuming x has at most 3 bit sets (10 operations)
 inline score_tv max_bit3(score_tv x) {
     return max_bit2(max_bit2(x));
 }
 
-// Determine the best possible five card hand out of a bit set of seven cards
+// Determine the best possible five card hand out of a bit set of seven cards (3+57+28+34+30+26+13+41+10 = 242 operations)
 score_tv score_hand(cards_tv cards) {
-    #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1))
+    #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1)) // 3 operations
     const score_t each_card = 0x1fff;
     const cards_t each_suit = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
 
-    // Check for straight flushes
+    // Check for straight flushes (22+5+10+7+3+10 = 57 operations)
     const cards_tv suits = count_suits(cards);
     const cards_tv flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
     const score_tv straight_flushes = all_straights(cards_with_suit(cards,flushes));
     score_tv score = if_nz1(straight_flushes,SCORE(STRAIGHT_FLUSH,0,max_bit3(straight_flushes)));
 
-    // Check for four of a kind
+    // Check for four of a kind (2+4+2+3+1+2+3+10+1 = 28 operations)
     const score_tv cand = convert_score(cards&cards>>26);
     const score_tv cor  = convert_score(cards|cards>>26)&each_card*(1+(1<<13));
     const score_tv quads = cand&cand>>13;
     const score_tv unique = each_card&(cor|cor>>13);
     score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit3(unique-quads))));
 
-    // Check for a full house
+    // Check for a full house (5+8+2+1+2+2+3+5+2+3+1 = 34 operations)
     const score_tv trips = (cand&cor>>13)|(cor&cand>>13);
     const score_tv pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
     const score_tv min_trips = min_bit(trips);
@@ -233,28 +234,28 @@ score_tv score_hand(cards_tv cards) {
         if_nz(pairs,SCORE(FULL_HOUSE,trips,max_bit2(pairs)), // If there are pairs, there can't be two kinds of trips
         if_ne1(trips,min_trips,SCORE(FULL_HOUSE,trips-min_trips,min_trips))))); // Two kind of trips: use only two of the lower one
 
-    // Check for flushes
+    // Check for flushes (7+7+2*(2+1+2)+1+2+3 = 30 operations)
     const score_tv suit_count = cards_with_suit(suits,flushes);
     score_tv suited = cards_with_suit(cards,flushes);
     suited = if_gt(suit_count,5u,suited-min_bit(suited),suited);
     suited = if_gt(suit_count,6u,suited-min_bit(suited),suited);
     score = max(score,if_nz1(suited,SCORE(FLUSH,0,suited)));
 
-    // Check for straights
+    // Check for straights (10+1+2+3+10 = 26 operations)
     const score_tv straights = all_straights(unique);
     score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit3(straights))));
 
-    // Check for three of a kind
+    // Check for three of a kind (1+2+3+1+6 = 13 operations)
     score = max(score,if_nz1(trips,SCORE(TRIPS,trips,drop_two_bits(unique-trips))));
 
-    // Check for pair or two pair
+    // Check for pair or two pair (3+1+2+2+2+3+6+1+2+2+3+6+1+3+3+1 = 41 operations)
     const score_tv high_pairs = drop_bit(pairs);
     score = max(score,if_nz1(pairs,
         if_eq(pairs,min_bit(pairs),SCORE(PAIR,pairs,drop_two_bits(unique-pairs)),
         if_eq(high_pairs,min_bit(high_pairs),SCORE(TWO_PAIR,pairs,drop_two_bits(unique-pairs)),
         SCORE(TWO_PAIR,high_pairs,drop_bit(unique-high_pairs))))));
 
-    // Nothing interesting happened, so high cards win
+    // Nothing interesting happened, so high cards win (1+3+6 = 10 operations)
     score = max(score,SCORE(HIGH_CARD,0,drop_two_bits(unique)));
     return score;
     #undef SCORE

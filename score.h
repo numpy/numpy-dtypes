@@ -123,12 +123,12 @@ inline uint64_tv hash2v(uint64_tv a, uint64_tv b) {
 }
 #endif
 
-// Drop the lowest bit, assuming a nonzero input (3 operations)
+// Drop the lowest bit (3 operations)
 inline score_tv drop_bit(score_tv x) {
     return x-min_bit(x);
 }
 
-// Drop the two lowest bits, assuming at least two bits set (6 operations)
+// Drop the two lowest bits (6 operations)
 inline score_tv drop_two_bits(score_tv x) {
     return drop_bit(drop_bit(x));
 }
@@ -203,7 +203,7 @@ inline score_tv max_bit(score_tv x) {
     return ((score_t)1<<31)>>clz(x);
 }
 
-// Determine the best possible five card hand out of a bit set of seven cards (40+19+27+30+16+13+41+10 = 196 operations)
+// Determine the best possible five card hand out of a bit set of seven cards (40+19+26+30+16+13+26+4 = 174 operations)
 score_tv score_hand(cards_tv cards) {
     #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1)) // 3 operations
     const score_t each_card = 0x1fff;
@@ -222,10 +222,11 @@ score_tv score_hand(cards_tv cards) {
     const score_tv unique = each_card&(cor|cor>>13);
     score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit(unique-quads))));
 
-    // Check for a full house (5+4+8+1+1+3+2+3 = 27 operations)
+    // Check for a full house (5+4+7+1+1+3+2+3 = 26 operations)
     const score_tv all_trips = (cand&cor>>13)|(cor&cand>>13);
     const score_tv trips = if_nz1(all_trips,max_bit(all_trips));
-    const score_tv pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
+    const score_tv pairs_and_trips = each_card&(cand|cand>>13|(cor&cor>>13));
+    const score_tv pairs = pairs_and_trips-trips;
     score = max(score,select((score_tv)0,SCORE(FULL_HOUSE,trips,max_bit(pairs)),(pairs!=0)&(trips!=0)));
 
     // Check for flushes (7+7+2*(2+1+2)+1+2+3 = 30 operations)
@@ -239,18 +240,19 @@ score_tv score_hand(cards_tv cards) {
     const score_tv straights = all_straights(unique);
     score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit(straights))));
 
-    // Check for three of a kind (1+2+3+1+6 = 13 operations)
-    score = max(score,if_nz1(trips,SCORE(TRIPS,trips,drop_two_bits(unique-trips))));
+    // Check for three of a kind (7+1+2+3 = 13 operations)
+    const score_tv kickers = drop_two_bits(unique-pairs_and_trips);
+    score = max(score,if_nz1(trips,SCORE(TRIPS,trips,kickers)));
 
-    // Check for pair or two pair (3+1+2+2+2+3+6+1+2+2+3+6+1+3+3+1 = 41 operations)
+    // Check for pair or two pair (3+1+2+2+2+3+2+2+3+3+2+1 = 26 operations)
     const score_tv high_pairs = drop_bit(pairs);
     score = max(score,if_nz1(pairs,
-        if_eq(pairs,min_bit(pairs),SCORE(PAIR,pairs,drop_two_bits(unique-pairs)),
-        if_eq(high_pairs,min_bit(high_pairs),SCORE(TWO_PAIR,pairs,drop_two_bits(unique-pairs)),
-        SCORE(TWO_PAIR,high_pairs,drop_bit(unique-high_pairs))))));
+        if_eq(pairs,min_bit(pairs),SCORE(PAIR,pairs,kickers),
+        if_eq(high_pairs,min_bit(high_pairs),SCORE(TWO_PAIR,pairs,kickers),
+        SCORE(TWO_PAIR,high_pairs,max_bit(unique-high_pairs))))));
 
-    // Nothing interesting happened, so high cards win (1+3+6 = 10 operations)
-    score = max(score,SCORE(HIGH_CARD,0,drop_two_bits(unique)));
+    // Nothing interesting happened, so high cards win (1+3 = 4 operations)
+    score = max(score,SCORE(HIGH_CARD,0,kickers));
     return score;
     #undef SCORE
 }

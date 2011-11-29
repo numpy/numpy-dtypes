@@ -5,30 +5,32 @@
 
 #ifdef __OPENCL_VERSION__
 typedef uint uint32_t;
-typedef uint4 uint32_t4;
+typedef uint4 uint32_tv;
 typedef ulong uint64_t;
-typedef ulong4 uint64_t4;
+typedef ulong4 uint64_tv;
 #else
 #include <stdint.h>
-typedef cl_uint4 uint32_t4;
-typedef cl_ulong4 uint64_t4;
+#include <algorithm>
+typedef uint32_t uint32_tv;
+typedef uint64_t uint64_tv;
 #define __global
 #define __kernel
 #define get_global_id(i) 0
+using std::max;
 #endif
 
 // A 52-entry bit set representing the cards in a hand, in suit-value major order
 typedef uint64_t cards_t;
-typedef uint64_t4 cards_t4;
+typedef uint64_tv cards_tv;
 
 // A 32-bit integer representing the value of a 7 card hand
 typedef uint32_t score_t;
-typedef uint32_t4 score_t4;
+typedef uint32_tv score_tv;
 
 // To make parallelization easy, we precompute the set of 5 element subsets of 48 elements.
 // These are stored as 5 6-bit values packed into a 32-bit int
 typedef uint32_t five_subset_t;
-typedef uint32_t4 five_subset_t4;
+typedef uint32_tv five_subset_tv;
 #define NUM_FIVE_SUBSETS 1712304
 
 // Hand types
@@ -54,11 +56,22 @@ inline uint64_t hash(uint64_t k);
 inline uint64_t hash2(uint64_t a, uint64_t b);
 inline uint64_t hash3(uint64_t a, uint64_t b, uint64_t c);
 #ifdef __OPENCL_VERSION__
-inline uint64_t4 hash_4(uint64_t4 k);
-inline uint64_t4 hash2_4(uint64_t4 a, uint64_t4 b);
-inline uint64_t4 hash3_4(uint64_t4 a, uint64_t4 b, uint64_t4 c);
+inline uint64_tv hashv(uint64_tv k);
+inline uint64_tv hash2v(uint64_tv a, uint64_tv b);
+inline uint64_tv hash3v(uint64_tv a, uint64_tv b, uint64_tv c);
 #endif
+inline score_tv drop_bit(score_tv x);
+inline score_tv drop_two_bits(score_tv x);
+inline cards_tv count_suits(cards_tv cards);
+inline score_tv cards_with_suit(cards_tv cards, cards_tv suits);
+inline score_tv all_straights(score_tv unique);
+inline score_tv max_bit2(score_tv x);
+inline score_tv max_bit3(score_tv x);
+score_tv score_hand(cards_tv cards);
+inline uint64_tv compare_cards(cards_t alice_cards, cards_t bob_cards, __global const cards_t* free, five_subset_tv set);
+inline cards_tv mostly_random_set(uint64_tv r);
 inline cards_t free_set(__global const cards_t* free, five_subset_t set);
+inline cards_tv free_sets(__global const cards_t* free, five_subset_tv set);
 
 // From Thomas Wang, http://www.concentric.net/~ttwang/tech/inthash.htm
 #define DEFINE_HASH(name,type) \
@@ -74,7 +87,7 @@ inline cards_t free_set(__global const cards_t* free, five_subset_t set);
     }
 DEFINE_HASH(hash,uint64_t)
 #ifdef __OPENCL_VERSION__
-DEFINE_HASH(hash_4,uint64_t4)
+DEFINE_HASH(hashv,uint64_tv)
 #endif
 #undef DEFINE_HASH
 
@@ -97,7 +110,7 @@ DEFINE_HASH(hash_4,uint64_t4)
     }
 DEFINE_HASH(hash3,uint64_t)
 #ifdef __OPENCL_VERSION__
-DEFINE_HASH(hash3_4,uint64_t4)
+DEFINE_HASH(hash3v,uint64_tv)
 #endif
 #undef DEFINE_HASH
 
@@ -106,15 +119,168 @@ inline uint64_t hash2(uint64_t a, uint64_t b) {
 }
 
 #ifdef __OPENCL_VERSION__
-inline uint64_t4 hash2_4(uint64_t4 a, uint64_t4 b) {
-    return hash3_4(hash_4(0),a,b);
+inline uint64_tv hash2v(uint64_tv a, uint64_tv b) {
+    return hash3v(hash(0),a,b);
 }
 #endif
+
+// Drop the lowest bit, assuming a nonzero input
+inline score_tv drop_bit(score_tv x) {
+    return x-min_bit(x);
+}
+
+// Drop the two lowest bits, assuming at least two bits set
+inline score_tv drop_two_bits(score_tv x) {
+    return drop_bit(drop_bit(x));
+}
+
+// Count the number of cards in each suit in parallel
+inline cards_tv count_suits(cards_tv cards) {
+    const cards_t suits = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
+    cards_tv s = cards; // initially, each suit has 13 single bit chunks
+    s = (s&suits*0x1555)+(s>>1&suits*0x0555); // reduce each suit to 1 single bit and 6 2-bit chunks
+    s = (s&suits*0x1333)+(s>>2&suits*0x0333); // reduce each suit to 1 single bit and 3 4-bit chunks
+    s = (s&suits*0x0f0f)+(s>>4&suits*0x010f); // reduce each suit to 2 8-bit chunks
+    s = (s+(s>>8))&suits*0xf; // reduce each suit to 1 16-bit count (only 4 bits of which can be nonzero)
+    return s;
+}
+
+#ifdef __OPENCL_VERSION__
+#define convert_score convert_uint4
+#define convert_cards convert_ulong4
+#else
+#define convert_score(c) ((score_tv)(c))
+#define convert_cards(c) ((cards_tv)(c))
+#define isequal(a,b) ((a)==(b))
+#define isnotequal(a,b) ((a)!=(b))
+#define isgreater(a,b) ((a)>(b))
+#define isgreaterequal(a,b) ((a)>=(b))
+#define select(a,b,c) ((c)?(b):(a))
+#endif
+
+// Given a set of cards and a set of suits, find the set of cards with that suit
+inline score_tv cards_with_suit(cards_tv cards, cards_tv suits) {
+    cards_tv c = cards&suits*0x1fff;
+    c |= c>>13;
+    c |= c>>26;
+    return convert_score(c)&0x1fff;
+}
+
+// Non-branching ternary operators.  All the 0* stuff is to make overload resolution work.  It should disappear at compile time.
+#define DEFINE_IFS(suffix,type) \
+    inline type if_nz##suffix(type c, type a, type b); \
+    inline type if_eq##suffix(type x, type y, type a, type b); \
+    inline type if_ne##suffix(type x, type y, type a, type b); \
+    inline type if_gt##suffix(type x, type y, type a, type b); \
+    inline type if_ge##suffix(type x, type y, type a, type b); \
+    inline type if_nz1##suffix(type c, type a); \
+    inline type if_eq1##suffix(type x, type y, type a); \
+    inline type if_ne1##suffix(type x, type y, type a); \
+    inline type if_nz##suffix(type c, type a, type b) { return select(a,b,isequal(c,0)); } \
+    inline type if_eq##suffix(type x, type y, type a, type b) { return select(b,a,isequal(x,y)); } \
+    inline type if_ne##suffix(type x, type y, type a, type b) { return select(b,a,isnotequal(x,y)); } \
+    inline type if_gt##suffix(type x, type y, type a, type b) { return select(b,a,isgreater(x,y)); } \
+    inline type if_ge##suffix(type x, type y, type a, type b) { return select(b,a,isgreaterequal(x,y)); } \
+    inline type if_nz1##suffix(type c, type a) { return if_nz##suffix(c,a,0); } \
+    inline type if_eq1##suffix(type x, type y, type a) { return if_eq##suffix(x,y,a,0); } \
+    inline type if_ne1##suffix(type x, type y, type a) { return if_ne##suffix(x,y,a,0); }
+DEFINE_IFS(,uint32_tv)
+DEFINE_IFS(l,uint64_tv)
+#undef DEFINE_IFS
+
+// Find all straights in a (suited) set of cards, assuming cards == cards&0x1111111111111
+inline score_tv all_straights(score_tv unique) {
+    const score_t wheel = (1<<12)|1|2|4|8;
+    const score_tv u = unique&unique<<1;
+    return (u&u>>2&unique>>3)|if_eq1(unique&wheel,wheel,(score_tv)1);
+}
+
+// Find the maximum bit set of x, assuming x has at most 2 bit sets
+inline score_tv max_bit2(score_tv x) {
+    score_tv m = min_bit(x);
+    return if_eq(x,m,x,x-m);
+}
+
+// Find the maximum bit set of x, assuming x has at most 3 bit sets
+inline score_tv max_bit3(score_tv x) {
+    return max_bit2(max_bit2(x));
+}
+
+// Determine the best possible five card hand out of a bit set of seven cards
+score_tv score_hand(cards_tv cards) {
+    #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1))
+    const score_t each_card = 0x1fff;
+    const cards_t each_suit = 1+((cards_t)1<<13)+((cards_t)1<<26)+((cards_t)1<<39);
+
+    // Check for straight flushes
+    const cards_tv suits = count_suits(cards);
+    const cards_tv flushes = each_suit&(suits>>2)&(suits>>1|suits); // Detect suits with at least 5 cards
+    const score_tv straight_flushes = all_straights(cards_with_suit(cards,flushes));
+    score_tv score = if_nz1(straight_flushes,SCORE(STRAIGHT_FLUSH,0,max_bit3(straight_flushes)));
+
+    // Check for four of a kind
+    const score_tv cand = convert_score(cards&cards>>26);
+    const score_tv cor  = convert_score(cards|cards>>26)&each_card*(1+(1<<13));
+    const score_tv quads = cand&cand>>13;
+    const score_tv unique = each_card&(cor|cor>>13);
+    score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit3(unique-quads))));
+
+    // Check for a full house
+    const score_tv trips = (cand&cor>>13)|(cor&cand>>13);
+    const score_tv pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
+    const score_tv min_trips = min_bit(trips);
+    score = max(score,if_nz1(trips,
+        if_nz(pairs,SCORE(FULL_HOUSE,trips,max_bit2(pairs)), // If there are pairs, there can't be two kinds of trips
+        if_ne1(trips,min_trips,SCORE(FULL_HOUSE,trips-min_trips,min_trips))))); // Two kind of trips: use only two of the lower one
+
+    // Check for flushes
+    const score_tv suit_count = cards_with_suit(suits,flushes);
+    score_tv suited = cards_with_suit(cards,flushes);
+    suited = if_gt(suit_count,5u,suited-min_bit(suited),suited);
+    suited = if_gt(suit_count,6u,suited-min_bit(suited),suited);
+    score = max(score,if_nz1(suited,SCORE(FLUSH,0,suited)));
+
+    // Check for straights
+    const score_tv straights = all_straights(unique);
+    score = max(score,if_nz1(straights,SCORE(STRAIGHT,0,max_bit3(straights))));
+
+    // Check for three of a kind
+    score = max(score,if_nz1(trips,SCORE(TRIPS,trips,drop_two_bits(unique-trips))));
+
+    // Check for pair or two pair
+    const score_tv high_pairs = drop_bit(pairs);
+    score = max(score,if_nz1(pairs,
+        if_eq(pairs,min_bit(pairs),SCORE(PAIR,pairs,drop_two_bits(unique-pairs)),
+        if_eq(high_pairs,min_bit(high_pairs),SCORE(TWO_PAIR,pairs,drop_two_bits(unique-pairs)),
+        SCORE(TWO_PAIR,high_pairs,drop_bit(unique-high_pairs))))));
+
+    // Nothing interesting happened, so high cards win
+    score = max(score,SCORE(HIGH_CARD,0,drop_two_bits(unique)));
+    return score;
+    #undef SCORE
+}
 
 inline cards_t free_set(__global const cards_t* free, five_subset_t set) {
     #define F(i) free[set>>(6*i)&0x3f]
     return F(0)|F(1)|F(2)|F(3)|F(4);
     #undef F
+}
+
+inline cards_tv free_sets(__global const cards_t* free, five_subset_tv set) {
+#ifdef __OPENCL_VERSION__
+    return (cards_tv)(free_set(free,set.s0),free_set(free,set.s1),free_set(free,set.s2),free_set(free,set.s3));
+#else
+    return free_set(free,set);
+#endif
+}
+
+// Evaluate a full set of hands and shared cards
+inline uint64_tv compare_cards(cards_t alice_cards, cards_t bob_cards, __global const cards_t* free, five_subset_tv set) {
+    const cards_tv shared_cards = free_sets(free,set);
+    const cards_tv alice_score = convert_cards(score_hand(shared_cards|alice_cards)),
+                   bob_score   = convert_cards(score_hand(shared_cards|bob_cards));
+    return if_gtl(alice_score,bob_score,(uint64_tv)1<<32,
+           if_gtl(bob_score,alice_score,(uint64_tv)1,(uint64_tv)0));
 }
 
 #endif

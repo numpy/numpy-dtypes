@@ -235,6 +235,7 @@ void compute_five_subsets() {
 cl_context opencl_context;
 struct device_t {
     cl_device_id id;
+    cl_device_type type;
     cl_command_queue queue;
     cl_kernel score_hands;
     cl_mem cards;
@@ -243,6 +244,10 @@ struct device_t {
     cl_mem free;
     cl_mem results;
     cl_kernel hash_scores;
+
+    bool operator<(const device_t& d) const {
+        return type==CL_DEVICE_TYPE_GPU && d.type!=CL_DEVICE_TYPE_GPU;
+    }
 };
 vector<device_t> devices;
 
@@ -266,8 +271,11 @@ void initialize_opencl(int device_types, bool verbose=true) {
         disable_timing = true;
     vector<cl_device_id> ids(devices.size());
     clGetContextInfo(opencl_context,CL_CONTEXT_DEVICES,device_space,&ids[0],0);
-    for (size_t i = 0; i < devices.size(); i++)
+    for (size_t i = 0; i < devices.size(); i++) {
         devices[i].id = ids[i];
+        clGetDeviceInfo(devices[i].id,CL_DEVICE_TYPE,sizeof(devices[i].type),&devices[i].type,0);
+    }
+    sort(devices.begin(),devices.end()); // Sort GPUs first
     if (verbose) {
         cerr<<"found "<<devices.size()<<" opencl "<<(devices.size()==1?"device: ":"devices: ");
         for (size_t i = 0; i < devices.size(); i++) {
@@ -386,22 +394,10 @@ uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_ca
     uint64_t sum = 0;
     for (size_t i = 0; i < n; i++)
         sum += results[i];
-
     // Fill in missing entries
     {timer_t timer("missing");
-    const size_t missing = NUM_FIVE_SUBSETS-n*BLOCK_SIZE;
-    cards_t cards[2*missing];
-    for (size_t i = 0; i < missing; i++) {
-        const cards_t shared = free_set(free,five_subsets[n*BLOCK_SIZE+i]);
-        cards[2*i+0] = alice_cards|shared;
-        cards[2*i+1] = bob_cards|shared;
-    }
-    score_t scores[2*missing];
-    score_hands_opencl(device,2*missing,scores,cards);
-    for (size_t i = 0; i < missing; i++) {
-        const score_t alice_score = scores[2*i+0], bob_score = scores[2*i+1];
-        sum += alice_score>bob_score?(uint64_t)1<<32:alice_score<bob_score?1u:0;
-    }}
+    for (size_t i = 0; i < NUM_FIVE_SUBSETS-n*BLOCK_SIZE; i++)
+        sum += compare_cards(alice_cards,bob_cards,free,five_subsets[n*BLOCK_SIZE+i]);}
     return sum;
 }
 

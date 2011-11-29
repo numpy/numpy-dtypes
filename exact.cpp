@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <OpenCL/opencl.h>
+#include "cl.hpp"
 #include <omp.h>
 #include <getopt.h>
 #include "score.h"
@@ -232,21 +232,25 @@ void compute_five_subsets() {
 }
 
 // OpenCL information
-cl_context opencl_context;
+cl::Context context;
+cl::Program program;
 struct device_t {
-    cl_device_id id;
-    cl_device_type type;
-    cl_command_queue queue;
-    cl_kernel score_hands;
-    cl_mem cards;
-    cl_kernel compare_cards;
-    cl_mem five_subsets;
-    cl_mem free;
-    cl_mem results;
-    cl_kernel hash_scores;
+    cl::Device id;
+    cl::CommandQueue queue;
+    cl::Kernel score_hands;
+    cl::Buffer cards;
+    cl::Kernel compare_cards;
+    cl::Buffer five_subsets;
+    cl::Buffer free;
+    cl::Buffer results;
+    cl::Kernel hash_scores;
 
     bool operator<(const device_t& d) const {
-        return type==CL_DEVICE_TYPE_GPU && d.type!=CL_DEVICE_TYPE_GPU;
+        return type()==CL_DEVICE_TYPE_GPU && d.type()!=CL_DEVICE_TYPE_GPU;
+    }
+
+    int type() const {
+        return id.getInfo<CL_DEVICE_TYPE>();
     }
 };
 vector<device_t> devices;
@@ -257,33 +261,24 @@ const size_t result_space = max(sizeof(score_t)*max_cards,sizeof(uint64_t)*NUM_F
 void initialize_opencl(int device_types, bool verbose=true) {
     timer_t timer("opencl");
     // Allocate context
-    opencl_context = clCreateContextFromType(0,device_types,0,0,0);
+    context = cl::Context(device_types,0);
 
     // Query all available devices
-    size_t device_space;
-    clGetContextInfo(opencl_context,CL_CONTEXT_DEVICES,0,0,&device_space);
-    if (!device_space) {
+    vector<cl::Device> ids = context.getInfo<CL_CONTEXT_DEVICES>(); 
+    if (!ids.size()) {
         cerr<<"error: no available OpenCL devices"<<endl;
         exit(1);
     }
-    devices.resize(device_space/sizeof(cl_device_id));
+    devices.resize(ids.size());
     if (devices.size()>1)
         disable_timing = true;
-    vector<cl_device_id> ids(devices.size());
-    clGetContextInfo(opencl_context,CL_CONTEXT_DEVICES,device_space,&ids[0],0);
-    for (size_t i = 0; i < devices.size(); i++) {
+    for (size_t i = 0; i < devices.size(); i++)
         devices[i].id = ids[i];
-        clGetDeviceInfo(devices[i].id,CL_DEVICE_TYPE,sizeof(devices[i].type),&devices[i].type,0);
-    }
     sort(devices.begin(),devices.end()); // Sort GPUs first
     if (verbose) {
         cerr<<"found "<<devices.size()<<" opencl "<<(devices.size()==1?"device: ":"devices: ");
-        for (size_t i = 0; i < devices.size(); i++) {
-            char name[1024];
-            clGetDeviceInfo(devices[i].id,CL_DEVICE_NAME,sizeof(name)-1,name,0);
-            if (i) cerr<<", ";
-            cerr<<name;
-        }
+        for (size_t i = 0; i < devices.size(); i++)
+            cerr<<(i?", ":"")<<devices[i].id.getInfo<CL_DEVICE_NAME>();
         cerr<<endl;
     }
 
@@ -298,51 +293,44 @@ void initialize_opencl(int device_types, bool verbose=true) {
     string source(st.st_size+1,0);
     fread(&source[0],st.st_size,1,file);
     fclose(file);
-    const char* source_p = source.c_str();
     char options[2048] = "-Werror -I";
     getcwd(options+strlen(options),2048-strlen(options));
-    cl_program program = clCreateProgramWithSource(opencl_context,1,&source_p,0,0);
+    cl::Program::Sources sources(1,make_pair(source.c_str(),strlen(source.c_str())));
+    program = cl::Program(context,sources);
     {
         timer_t timer("build");
-        int status = clBuildProgram(program,0,0,options,0,0);
+        int status = program.build(ids,options);
         if (status!=CL_SUCCESS) {
             assert(status==CL_BUILD_PROGRAM_FAILURE);
             cerr<<"error: failed to build opencl code"<<endl;
-            for (size_t i = 0; i < devices.size(); i++) {
-                size_t len;
-                clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,0,0,&len);
-                string log(len+1,0);
-                clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,len,&log[0],0);
-                cerr<<"device "<<i<<":\n"<<log<<flush;
-            }
+            for (size_t i = 0; i < devices.size(); i++)
+                cerr<<"device "<<i<<":\n"<<program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(devices[i].id)<<flush;
             exit(1);
         }
     }
 
-    // Make a command queue for each device
-    for (size_t i = 0; i < devices.size(); i++)
-        devices[i].queue = clCreateCommandQueue(opencl_context,devices[i].id,0,0);
-
     // Set up each device
     for (size_t i = 0; i < devices.size(); i++) {
         device_t& d = devices.at(i);
+        // Make a command queue
+        d.queue = cl::CommandQueue(context,d.id);
         // Make the kernels
-        d.score_hands = clCreateKernel(program,"score_hands_kernel",0);
-        d.compare_cards = clCreateKernel(program,"compare_cards_kernel",0);
-        d.hash_scores = clCreateKernel(program,"hash_scores_kernel",0);
+        d.score_hands = cl::Kernel(program,"score_hands_kernel");
+        d.compare_cards = cl::Kernel(program,"compare_cards_kernel",0);
+        d.hash_scores = cl::Kernel(program,"hash_scores_kernel",0);
         // Allocate device arrays
         assert(max_cards*sizeof(score_t)<=result_space);
-        d.cards = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY,max_cards*sizeof(cards_t),0,0);
-        d.five_subsets = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY|CL_MEM_COPY_HOST_PTR,sizeof(five_subsets),five_subsets,0);
-        d.free = clCreateBuffer(opencl_context,CL_MEM_READ_ONLY,48*sizeof(cards_t),0,0);
-        d.results = clCreateBuffer(opencl_context,CL_MEM_WRITE_ONLY,result_space,0,0);
+        d.cards = cl::Buffer(context,CL_MEM_READ_ONLY,max_cards*sizeof(cards_t));
+        d.five_subsets = cl::Buffer(context,CL_MEM_READ_ONLY|CL_MEM_COPY_HOST_PTR,sizeof(five_subsets),five_subsets);
+        d.free = cl::Buffer(context,CL_MEM_READ_ONLY,48*sizeof(cards_t));
+        d.results = cl::Buffer(context,CL_MEM_WRITE_ONLY,result_space);
         // Set constant parameters
-        clSetKernelArg(d.score_hands,0,sizeof(cl_mem),(void*)&d.cards);
-        clSetKernelArg(d.score_hands,1,sizeof(cl_mem),(void*)&d.results);
-        clSetKernelArg(d.compare_cards,0,sizeof(cl_mem),(void*)&d.five_subsets);
-        clSetKernelArg(d.compare_cards,1,sizeof(cl_mem),(void*)&d.free);
-        clSetKernelArg(d.compare_cards,2,sizeof(cl_mem),(void*)&d.results);
-        clSetKernelArg(d.hash_scores,0,sizeof(cl_mem),(void*)&d.results);
+        d.score_hands.setArg(0,d.cards);
+        d.score_hands.setArg(1,d.results);
+        d.compare_cards.setArg(0,d.five_subsets);
+        d.compare_cards.setArg(1,d.free);
+        d.compare_cards.setArg(2,d.results);
+        d.hash_scores.setArg(0,d.results);
     }
 }
 
@@ -351,21 +339,21 @@ void score_hands_opencl(size_t device, size_t n, score_t* scores, const cards_t*
     assert(n <= max_cards);
     const device_t& d = devices.at(device);
     size_t count = (n+3)/4;
-    clEnqueueWriteBuffer(d.queue,d.cards,CL_TRUE,0,n*sizeof(cards_t),cards,0,0,0);
-    clEnqueueNDRangeKernel(d.queue,d.score_hands,1,0,&count,0,0,0,0);
-    clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,n*sizeof(score_t),scores,0,0,0);
+    d.queue.enqueueWriteBuffer(d.cards,CL_TRUE,0,n*sizeof(cards_t),cards);
+    d.queue.enqueueNDRangeKernel(d.score_hands,cl::NullRange,cl::NDRange(count),cl::NullRange);
+    d.queue.enqueueReadBuffer(d.results,CL_TRUE,0,n*sizeof(score_t),scores);
 }
 
 // Hash a bunch of hands in parallel using OpenCL
 void hash_scores_opencl(size_t device, size_t n, uint64_t* hashes) {
     assert(sizeof(uint64_t)*n <= result_space);
-    const device_t& d = devices.at(device);
+    device_t& d = devices.at(device);
     const size_t batch = 1<<14;
     for (size_t i = 0; i < n; i += batch) {
         size_t count = min(batch,n-i);
-        clSetKernelArg(d.hash_scores,1,sizeof(uint64_t),&i);
-        clEnqueueNDRangeKernel(d.queue,d.hash_scores,1,0,&count,0,0,0,0);
-        clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,count*sizeof(uint64_t),hashes+i,0,0,0);
+        d.hash_scores.setArg(1,i);
+        d.queue.enqueueNDRangeKernel(d.hash_scores,cl::NullRange,cl::NDRange(count),cl::NullRange);
+        d.queue.enqueueReadBuffer(d.results,CL_TRUE,0,count*sizeof(uint64_t),hashes+i);
         if ((n/batch)%max(size_t(1),n/batch/1024)==0)
             cout<<'.'<<flush;
     }
@@ -374,24 +362,24 @@ void hash_scores_opencl(size_t device, size_t n, uint64_t* hashes) {
 
 // Process all five subsets in parallel using OpenCL
 uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
-    const device_t& d = devices.at(device);
+    device_t& d = devices.at(device);
     // Set arguments
     {timer_t timer("set args");
-    clSetKernelArg(d.compare_cards,3,sizeof(cards_t),&alice_cards);
-    clSetKernelArg(d.compare_cards,4,sizeof(cards_t),&bob_cards);}
+    d.compare_cards.setArg(3,alice_cards);
+    d.compare_cards.setArg(4,bob_cards);}
     // Copy free to device
     {timer_t timer("write free");
-    clEnqueueWriteBuffer(d.queue,d.free,CL_TRUE,0,48*sizeof(cards_t),free,0,0,0);}
+    d.queue.enqueueWriteBuffer(d.free,CL_TRUE,0,48*sizeof(cards_t),free);}
     // Compute
     const size_t n = NUM_FIVE_SUBSETS/BLOCK_SIZE;
     //const size_t n = (NUM_FIVE_SUBSETS+BLOCK_SIZE-1)/BLOCK_SIZE;
     {timer_t timer("compute");
-    clEnqueueNDRangeKernel(d.queue,d.compare_cards,1,0,&n,0,0,0,0);
-    clFinish(d.queue);}
+    d.queue.enqueueNDRangeKernel(d.compare_cards,cl::NullRange,cl::NDRange(n),cl::NullRange);
+    d.queue.finish();}
     // Read back results and sum
     vector<uint64_t> results(n);
     {timer_t timer("read results");
-    clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,sizeof(uint64_t)*n,&results[0],0,0,0);}
+    d.queue.enqueueReadBuffer(d.results,CL_TRUE,0,sizeof(uint64_t)*n,&results[0]);}
     uint64_t sum = 0;
     for (size_t i = 0; i < n; i++)
         sum += results[i];

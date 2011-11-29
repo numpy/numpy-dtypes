@@ -394,6 +394,8 @@ inline uint32_t bit_stack(bool b0, bool b1, bool b2, bool b3) {
     return b0|b1<<1|b2<<2|b3<<3;
 }
 
+uint64_t total_comparisons = 0;
+
 // Consider all possible sets of shared cards to determine the probabilities of wins, losses, and ties.
 // For efficiency, the set of shared cards is generated in decreasing order (this saves a factor of 5! = 120).
 outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
@@ -422,6 +424,8 @@ outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
                             free[i++] = cards_t(1)<<c;
                     // Consider all possible sets of shared cards
                     cache[sig] = compare_cards_opencl(device, alice_cards, bob_cards, free);
+                    #pragma omp critical
+                    total_comparisons += NUM_FIVE_SUBSETS; 
                 }
                 wins += cache[sig];
                 total += NUM_FIVE_SUBSETS;
@@ -746,6 +750,9 @@ int main(int argc, char** argv) {
         cerr<<"unknown command: "<<cmd<<endl;
         return 1;
     }
+
+    if (total_comparisons)
+        cerr<<"total comparisons = "<<total_comparisons<<endl;
 
     timer.close();
     timer_t::dump();

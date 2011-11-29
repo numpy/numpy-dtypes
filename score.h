@@ -198,12 +198,12 @@ inline score_tv all_straights(score_tv unique) {
 #define clz __builtin_clz
 #endif
 
-// Find the maximum bit set of x (2 operations)
+// Find the maximum bit set of x, assuming x is nonzero (2 operations)
 inline score_tv max_bit(score_tv x) {
     return ((score_t)1<<31)>>clz(x);
 }
 
-// Determine the best possible five card hand out of a bit set of seven cards (40+19+31+30+16+13+41+10 = 200 operations)
+// Determine the best possible five card hand out of a bit set of seven cards (40+19+27+30+16+13+41+10 = 196 operations)
 score_tv score_hand(cards_tv cards) {
     #define SCORE(type,c0,c1) ((type)|((c0)<<14)|(c1)) // 3 operations
     const score_t each_card = 0x1fff;
@@ -222,13 +222,11 @@ score_tv score_hand(cards_tv cards) {
     const score_tv unique = each_card&(cor|cor>>13);
     score = max(score,if_nz1(quads,SCORE(QUADS,quads,max_bit(unique-quads))));
 
-    // Check for a full house (5+8+2+1+2+2+3+2+2+3+1 = 31 operations)
-    const score_tv trips = (cand&cor>>13)|(cor&cand>>13);
+    // Check for a full house (5+4+8+1+1+3+2+3 = 27 operations)
+    const score_tv all_trips = (cand&cor>>13)|(cor&cand>>13);
+    const score_tv trips = if_nz1(all_trips,max_bit(all_trips));
     const score_tv pairs = each_card&~trips&(cand|cand>>13|(cor&cor>>13));
-    const score_tv min_trips = min_bit(trips);
-    score = max(score,if_nz1(trips,
-        if_nz(pairs,SCORE(FULL_HOUSE,trips,max_bit(pairs)), // If there are pairs, there can't be two kinds of trips
-        if_ne1(trips,min_trips,SCORE(FULL_HOUSE,trips-min_trips,min_trips))))); // Two kind of trips: use only two of the lower one
+    score = max(score,select((score_tv)0,SCORE(FULL_HOUSE,trips,max_bit(pairs)),(pairs!=0)&(trips!=0)));
 
     // Check for flushes (7+7+2*(2+1+2)+1+2+3 = 30 operations)
     const score_tv suit_count = cards_with_suit(suits,flushes);

@@ -4,7 +4,11 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include <tr1/unordered_map>
+#include <algorithm>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 #include <OpenCL/opencl.h>
 #include <omp.h>
 #include <getopt.h>
@@ -20,6 +24,10 @@ using std::vector;
 using std::string;
 using std::min;
 using std::max;
+using std::tr1::unordered_map;
+using std::make_pair;
+using std::pair;
+using std::sort;
 
 namespace {
 
@@ -107,6 +115,93 @@ const char* show_type(score_t type) {
     }
 }
 
+// The current timer implementation isn't thread safe, so we disable it if using more than one device
+bool disable_timing = false;
+
+class timer_t {
+    // We store timing information in a tree of named nodes
+    typedef int node_id;
+    static node_id next_id;
+    static unordered_map<node_id,unordered_map<const char*,node_id> > children;
+    static unordered_map<node_id,double> time;
+    static node_id current;
+    // Information about the current timer scope
+    node_id parent;
+    double start;
+public:
+    timer_t(const char* name) {
+        if (disable_timing) {
+            parent = start = 0;
+            return;
+        }
+        start = current_time();
+        parent = current;
+        node_id& self = children[current][name]; 
+        if (!self)
+            self = ++next_id;
+        current = self;
+    }
+
+    ~timer_t() {
+        close();
+    }
+
+    void close() {
+        if (disable_timing || parent<0)
+            return;
+        double end = current_time();
+        time[current] += end-start;
+        current = parent;
+    }
+
+    static void dump() {
+        if (disable_timing)
+            return;
+        cerr<<"Timing:"<<endl; 
+        int width = 0;
+        dump_width(1,0,width);
+        dump_helper(1,0,width);
+        fflush(stderr);
+    }
+
+private:
+    static double current_time() {
+        timeval tv;
+        gettimeofday(&tv,0);
+        return tv.tv_sec+1e-6*tv.tv_usec;
+    }
+
+    static void dump_width(int depth, node_id node, int& width) {
+        const unordered_map<const char*,node_id>& c = children[node];
+        vector<pair<node_id,const char*> > ids;
+        for (unordered_map<const char*,node_id>::const_iterator i = c.begin(), e = c.end(); i != e; ++i) {
+            width = max(width,int(2*depth+strlen(i->first)));
+            dump_width(depth+1,i->second,width);
+        }
+    }
+
+    static void dump_helper(int depth, node_id node, int width) {
+        const unordered_map<const char*,node_id>& c = children[node];
+        vector<pair<node_id,const char*> > ids;
+        for (unordered_map<const char*,node_id>::const_iterator i = c.begin(), e = c.end(); i != e; ++i)
+            ids.push_back(make_pair(i->second,i->first));
+        sort(ids.begin(),ids.end());
+        double total = time[node];
+        for (size_t i = 0; i < ids.size(); i++) {
+            double t = time[ids[i].first];
+            fprintf(stderr,"%*s%-*s%8.4f s\n",2*depth,"",width-2*depth,ids[i].second,t);
+            dump_helper(depth+1,ids[i].first,width);
+            total -= t;
+        }
+        if (ids.size() && time[node])
+            fprintf(stderr,"%*s%-*s%8.4f s\n",2*depth,"",width-2*depth,"other",total);
+    }
+};
+timer_t::node_id timer_t::next_id = 0;
+timer_t::node_id timer_t::current = 0;
+unordered_map<timer_t::node_id,unordered_map<const char*,timer_t::node_id> > timer_t::children;
+unordered_map<timer_t::node_id,double> timer_t::time;
+
 struct outcomes_t {
     uint32_t alice,bob,tie;
 
@@ -155,6 +250,7 @@ const size_t max_cards = 20<<17;
 const size_t result_space = max(sizeof(score_t)*max_cards,sizeof(uint64_t)*NUM_FIVE_SUBSETS/BLOCK_SIZE);
 
 void initialize_opencl(int device_types, bool verbose=true) {
+    timer_t timer("opencl");
     // Allocate context
     opencl_context = clCreateContextFromType(0,device_types,0,0,0);
 
@@ -166,6 +262,8 @@ void initialize_opencl(int device_types, bool verbose=true) {
         exit(1);
     }
     devices.resize(device_space/sizeof(cl_device_id));
+    if (devices.size()>1)
+        disable_timing = true;
     vector<cl_device_id> ids(devices.size());
     clGetContextInfo(opencl_context,CL_CONTEXT_DEVICES,device_space,&ids[0],0);
     for (size_t i = 0; i < devices.size(); i++)
@@ -196,18 +294,21 @@ void initialize_opencl(int device_types, bool verbose=true) {
     char options[2048] = "-Werror -I";
     getcwd(options+strlen(options),2048-strlen(options));
     cl_program program = clCreateProgramWithSource(opencl_context,1,&source_p,0,0);
-    int status = clBuildProgram(program,0,0,options,0,0);
-    if (status!=CL_SUCCESS) {
-        assert(status==CL_BUILD_PROGRAM_FAILURE);
-        cerr<<"error: failed to build opencl code"<<endl;
-        for (size_t i = 0; i < devices.size(); i++) {
-            size_t len;
-            clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,0,0,&len);
-            string log(len+1,0);
-            clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,len,&log[0],0);
-            cerr<<"device "<<i<<":\n"<<log<<flush;
+    {
+        timer_t timer("build");
+        int status = clBuildProgram(program,0,0,options,0,0);
+        if (status!=CL_SUCCESS) {
+            assert(status==CL_BUILD_PROGRAM_FAILURE);
+            cerr<<"error: failed to build opencl code"<<endl;
+            for (size_t i = 0; i < devices.size(); i++) {
+                size_t len;
+                clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,0,0,&len);
+                string log(len+1,0);
+                clGetProgramBuildInfo(program,devices[i].id,CL_PROGRAM_BUILD_LOG,len,&log[0],0);
+                cerr<<"device "<<i<<":\n"<<log<<flush;
+            }
+            exit(1);
         }
-        exit(1);
     }
 
     // Make a command queue for each device
@@ -267,22 +368,27 @@ void hash_scores_opencl(size_t device, size_t n, uint64_t* hashes) {
 uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_cards, const cards_t* free) {
     const device_t& d = devices.at(device);
     // Set cards
+    {timer_t timer("set args");
     clSetKernelArg(d.compare_cards,3,sizeof(cards_t),&alice_cards);
-    clSetKernelArg(d.compare_cards,4,sizeof(cards_t),&bob_cards);
+    clSetKernelArg(d.compare_cards,4,sizeof(cards_t),&bob_cards);}
     // Copy free to device
-    clEnqueueWriteBuffer(d.queue,d.free,CL_TRUE,0,48*sizeof(cards_t),free,0,0,0);
+    {timer_t timer("write free");
+    clEnqueueWriteBuffer(d.queue,d.free,CL_TRUE,0,48*sizeof(cards_t),free,0,0,0);}
     // Compute
     const size_t n = NUM_FIVE_SUBSETS/BLOCK_SIZE;
     //const size_t n = (NUM_FIVE_SUBSETS+BLOCK_SIZE-1)/BLOCK_SIZE;
-    clEnqueueNDRangeKernel(d.queue,d.compare_cards,1,0,&n,0,0,0,0);
+    {timer_t timer("compute");
+    clEnqueueNDRangeKernel(d.queue,d.compare_cards,1,0,&n,0,0,0,0);}
     // Read back results and sum
     vector<uint64_t> results(n);
-    clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,sizeof(uint64_t)*n,&results[0],0,0,0);
+    {timer_t timer("read results");
+    clEnqueueReadBuffer(d.queue,d.results,CL_TRUE,0,sizeof(uint64_t)*n,&results[0],0,0,0);}
     uint64_t sum = 0;
     for (size_t i = 0; i < n; i++)
         sum += results[i];
 
     // Fill in missing entries
+    {timer_t timer("missing");
     const size_t missing = NUM_FIVE_SUBSETS-n*BLOCK_SIZE;
     cards_t cards[2*missing];
     for (size_t i = 0; i < missing; i++) {
@@ -295,7 +401,7 @@ uint64_t compare_cards_opencl(size_t device, cards_t alice_cards, cards_t bob_ca
     for (size_t i = 0; i < missing; i++) {
         const score_t alice_score = scores[2*i+0], bob_score = scores[2*i+1];
         sum += alice_score>bob_score?(uint64_t)1<<32:alice_score<bob_score?1u:0;
-    }
+    }}
     return sum;
 }
 
@@ -306,6 +412,7 @@ inline uint32_t bit_stack(bool b0, bool b1, bool b2, bool b3) {
 // Consider all possible sets of shared cards to determine the probabilities of wins, losses, and ties.
 // For efficiency, the set of shared cards is generated in decreasing order (this saves a factor of 5! = 120).
 outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
+    timer_t timer("compare hands");
     uint32_t total = 0;
     uint64_t wins = 0;
     uint64_t cache[16] = {0}; // Cache wins based on 4 suit equality bits
@@ -457,6 +564,7 @@ inline cards_t mostly_random_set(uint64_t r) {
 }
 
 void regression_test_score_hand(size_t multiple) {
+    timer_t timer("test score hands");
     // Score a large number of hands
     const size_t m = multiple<<17, n = 1<<10;
     cout<<"score test: scoring "<<m*n<<" hands"<<endl;
@@ -524,6 +632,7 @@ vector<outcomes_t> compare_many_hands(const vector<hand_t>& pairs, bool verbose)
 }
 
 void regression_test_compare_hands(size_t n) {
+    timer_t timer("test compare hands");
     cout<<"compare test: comparing "<<n<<" random pairs of hands, including at least one matched pair"<<endl;
     vector<hand_t> pairs;
     for (uint64_t i = 0; i < n; i++) {
@@ -555,6 +664,7 @@ void usage(const char* program) {
 } // unnamed namespace
 
 int main(int argc, char** argv) {
+    timer_t timer("all");
     const char* program = argv[0];
     int device_types = CL_DEVICE_TYPE_ALL;
 
@@ -582,9 +692,12 @@ int main(int argc, char** argv) {
     string cmd = argv[0];
 
     // Initialize
-    compute_five_subsets();
-    compute_hands();
-    initialize_opencl(device_types,true);
+    {
+        timer_t timer("initialize");
+        compute_five_subsets();
+        compute_hands();
+        initialize_opencl(device_types,true);
+    }
 
     // Run a few tests
     test_score_hand();
@@ -631,5 +744,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    timer.close();
+    timer_t::dump();
     return 0;
 }

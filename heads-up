@@ -136,26 +136,7 @@ if 0:
     rank = sorted(i,key=lambda i:outcome[i])
     print 'hand rank = %s'%(' '.join(hands[i] for i in rank))
 
-def check_payoff_slow(bet,alice,bob,n=10000):
-    '''Warning: This routine is slightly inaccurate, since it ignores the varying probability of
-    overlapping suits of hands'''
-    count = 0
-    payoff = 0
-    for _ in xrange(n):
-        cs = random.randint(len(cards_to_hand),size=4)
-        if sum(cs.reshape(-1,1)==cs.reshape(1,-1))!=4:
-            continue
-        count += 1
-        ha = cards_to_hand[cs[0],cs[1]]
-        hb = cards_to_hand[cs[2],cs[3]]
-        if alice[ha]:
-            if bob[hb]:
-                payoff += (1+bet)*(2*win[ha,hb]-1)
-            else:
-                payoff += 1
-    return payoff/count
-
-def check_payoff_medium(bet,alice,bob):
+def check_payoff_slow(bet,alice,bob):
     payoff = 0
     for ha in xrange(len(hands)):
         for hb in xrange(len(hands)):
@@ -354,6 +335,5 @@ else:
     assert allclose(equity,check_payoff(bet,alice,bob))
     print "Alice's exact payoff = %g"%equity
     if 0:
-        print "Alice's approximate payoff = %g"%check_payoff_slow(bet,alice,bob)
-        print "Alice's exact payoff = %g"%check_payoff_medium(bet,alice,bob)
+        print "Alice's exact payoff = %g"%check_payoff_slow(bet,alice,bob)
 

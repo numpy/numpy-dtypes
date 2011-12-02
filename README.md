@@ -65,11 +65,10 @@ To emphasize, the bet amount b is frozen in advance; Alice does not get to choos
 * [numpy](http://numpy.scipy.org)
 * [scipy](http://www.scipy.org)
 * [matplotlib](http://matplotlib.sourceforge.net)
-* [cvxopt](http://abel.ee.ucla.edu/cvxopt)
 
 On a Mac, these can be obtained through [MacPorts](http://www.macports.org) via
 
-    sudo port install py26-numpy py26-scipy py26-matplotlib py26-cvxopt
+    sudo port install py26-numpy py26-scipy py26-matplotlib
 
 ### Usage
 

@@ -3,10 +3,9 @@
 from __future__ import division
 import re
 import sys
-from numpy import *
 import optparse
-import cvxopt 
-import cvxopt.solvers
+from numpy import *
+from nash import *
 from fractions import Fraction
 
 usage = "usage: %prog [options...] [args...]"
@@ -31,7 +30,7 @@ def die(s):
 # Load exact win probabilities.  Important: win[a,b]+win[b,a]<1 due to ties, unlike the approximate version above
 def parse_exact_matchups():
     matchup_pattern = re.compile(r'^(\w+)\s+vs\.\s+(\w+):$')
-    entry_pattern = re.compile(r'^\s+(Alice|Bob|Tie):\s+(\d+)\/(\d+) = ([\d.]+)$')
+    entry_pattern = re.compile(r'^\s+(Alice|Bob|Tie):\s+(\d+/\d+) = ([\d.]+)$')
     lines = open('exact.txt').readlines()
     assert len(lines)%4==0
     win = zeros((len(hands),)*2,dtype=object)
@@ -43,10 +42,7 @@ def parse_exact_matchups():
             m = entry_pattern.match(lines[4*i+j+1])
             if not m: die('Weird entry line: %s'%lines[4*i+j+1][:-1])
             assert m.group(1)==name
-            exact = Fraction(int(m.group(2)),int(m.group(3)))
-            approx = float(m.group(4))
-            assert allclose(float(exact),approx)
-            return exact
+            return Fraction(m.group(2))
         w,l,t= entry(0,'Alice'),entry(1,'Bob'),entry(2,'Tie')
         assert w+l+t==1
         win[h0,h1] = w
@@ -171,36 +167,6 @@ def always_call():
 
 def ahash(*args):
     return hash(''.join(a.tostring() for a in args))
-
-def zero_sum_nash_equilibrium_side(payoff):
-    '''Alice chooses the row and Bob chooses the column.
-    Given Alice's payoff matrix, we compute Alice's optimal payoff and (mixed) strategy.
-    See http://en.wikipedia.org/wiki/Zero_sum_game for details.'''
-    assert payoff.ndim==2
-    M = payoff.T
-    M = M - M.min()
-    M = M/max(M.max(),1e-10)+1
-    assert all(M>0)
-    # We want to minimize sum(u) s.t. Mu >= 1, u >= 0.  Let M be m by n.
-    # Adding positive slack variables s0,s1, this is
-    #     min 1_n . u s.t. Mu = 1_m + s0, u = s1
-    #     min 1_n . u s.t. -Mu + s0 = -1_m, -u + s1 = 0_n
-    #     min 1_n . u s.t. -vstack(M,eye(n)) u + s0 = stack(-1_m,0_n)
-    # According to http://abel.ee.ucla.edu/cvxopt/userguide/coneprog.html#linear-programming, this means
-    m,n = M.shape
-    c = ones(n)
-    G = -vstack([M,eye(n)])
-    h = hstack([-ones(m),zeros(n)])
-    sol = cvxopt.solvers.lp(cvxopt.matrix(c),cvxopt.matrix(G),cvxopt.matrix(h))
-    u = asarray(sol['x']).ravel()
-    u /= sum(u)
-    return dot(payoff.T,u).min(),u
-
-def zero_sum_nash_equilibrium(payoff):
-    A,alice = zero_sum_nash_equilibrium_side(payoff)
-    B,bob = zero_sum_nash_equilibrium_side(-payoff.T)
-    assert allclose(A,-B)
-    return A,alice,bob
 
 # Converge to heads up Nash equilibrium from an initial strategy guess
 def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):

@@ -1,3 +1,4 @@
 exact
 *.E
 *.clbuilder
+*.pyc

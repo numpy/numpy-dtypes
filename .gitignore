@@ -2,3 +2,6 @@ exact
 *.E
 *.clbuilder
 *.pyc
+build
+*.so
+*.dSYM

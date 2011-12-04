@@ -57,7 +57,6 @@ def simplex_method(c,A,b):
     If c,A,b are fractions, the result is exact.'''
     # Phase 1: Add slack variables to get an initial canonical tableu, and solve
     (n,m),dtype = A.shape,A.dtype
-    print 'inside =',n,m
     assert c.shape==(m,)
     assert b.shape==(n,)
     T = vstack([hstack([1,zeros(m+1,dtype),-ones(n,dtype),0]).reshape(1,-1),
@@ -99,7 +98,6 @@ def zero_sum_nash_equilibrium_side(payoff):
     # Our linear program is now in standard form.
     m,n = M.shape
     dtype = M.dtype
-    print 'outside =',m,n
     f,u = simplex_method(hstack([ones(n,dtype),zeros(m,dtype)]),hstack([M,-eye(m,dtype=dtype)]),ones(m,dtype))
     u = u[:n]
     u /= sum(u)

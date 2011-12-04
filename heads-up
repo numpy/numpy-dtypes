@@ -6,11 +6,12 @@ import sys
 import optparse
 from numpy import *
 from nash import *
-from fractions import Fraction
+from util import *
+from rational import *
 
 usage = "usage: %prog [options...] [args...]"
 parser = optparse.OptionParser(usage)
-parser.add_option('-b','--bet',type=float,default=0.,help='set a fixed bet level')
+parser.add_option('-b','--bet',type=str,default=0,help='set a fixed bet level')
 parser.add_option('--plot',action='store_true',help="plot Alice's equity for bets in [0,bet]")
 parser.add_option('--max',action='store_true',help="maximize Alice's equity as a function of bet in [0,bet]")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
@@ -33,7 +34,7 @@ def parse_exact_matchups():
     entry_pattern = re.compile(r'^\s+(Alice|Bob|Tie):\s+(\d+/\d+) = ([\d.]+)$')
     lines = open('exact.txt').readlines()
     assert len(lines)%4==0
-    win = zeros((len(hands),)*2,dtype=object)
+    win = zeros((len(hands),)*2,dtype=rational)
     for i in xrange(len(lines)//4):
         m = matchup_pattern.match(lines[4*i])
         if not m: die('Weird matchup line: %s'%lines[4*i][:-1])
@@ -42,7 +43,7 @@ def parse_exact_matchups():
             m = entry_pattern.match(lines[4*i+j+1])
             if not m: die('Weird entry line: %s'%lines[4*i+j+1][:-1])
             assert m.group(1)==name
-            return Fraction(m.group(2))
+            return rational(m.group(2))
         w,l,t= entry(0,'Alice'),entry(1,'Bob'),entry(2,'Tie')
         assert w+l+t==1
         win[h0,h1] = w
@@ -50,9 +51,8 @@ def parse_exact_matchups():
     assert all(win>0)
     return win
 exact_win = parse_exact_matchups()
-win = exact_win.astype(float)
-win = win+(1-win-win.T)/2
-assert allclose(win+win.T,1)
+
+print 'denominator = %s'%lcm.reduce(denominator(exact_win.ravel()))
 
 # Build a map from pairs of cards (represented as 4*id+suit) to hand ids
 def compute_cards_to_hand():
@@ -80,46 +80,53 @@ assert sum(cards_to_hand<0)==52
 def hand_probabilities():
     # Count how many times h occurs in cards_to_hand for each h
     def prob(x):
-        prob = empty(len(hands))
+        prob = zeros(len(hands),rational)
         for h in xrange(len(hands)):
             prob[h] = sum(x==h)
-        return prob/sum(prob)
+        return rationals(prob)/sum(prob)
     hand_prob = prob(cards_to_hand)
 
     i = xrange(len(cards_to_hand))
     hand_to_cards = dict((cards_to_hand[c,d],(c,d)) for c in i for d in i)
 
     # Compute conditional probabilities of each hand given each other hand
-    cond_hand_prob = empty((len(hands),)*2)
+    cond_hand_prob = zeros((len(hands),)*2,rational)
     for h in xrange(len(hands)):
         cs = hand_to_cards[h]
         remaining = array([i for i in xrange(13*4) if i not in cs])
         cond_hand_prob[h] = prob(cards_to_hand[remaining.reshape(-1,1),remaining.reshape(1,-1)])
     return hand_prob,cond_hand_prob
-hand_prob,cond_hand_prob = hand_probabilities()
-hand_hand_prob = hand_prob.reshape(-1,1)*cond_hand_prob
-assert allclose(sum(hand_hand_prob),1)
-assert allclose(hand_hand_prob,hand_hand_prob.T)
+exact_hand_prob,exact_cond_hand_prob = hand_probabilities()
+exact_hand_hand_prob = exact_hand_prob.reshape(-1,1)*exact_cond_hand_prob
+assert sum(exact_hand_hand_prob)==1
+assert all(exact_hand_hand_prob==exact_hand_hand_prob.T)
 
 # Check all interesting conditional probabilities
-assert allclose(hand_prob[hand_id['AA']],1/13*3/51)
-assert allclose(hand_prob[hand_id['AKs']],2/13/51)
-assert allclose(hand_prob[hand_id['AKo']],2/13*3/51)
-assert allclose(cond_hand_prob[hand_id['AA'],hand_id['AA']],2/50*1/49)
-assert allclose(cond_hand_prob[hand_id['AA'],hand_id['KK']],4/50*3/49)
-assert allclose(cond_hand_prob[hand_id['AA'],hand_id['AKs']],2*2/50/49)
-assert allclose(cond_hand_prob[hand_id['AA'],hand_id['AKo']],2*2/50*3/49)
-assert allclose(cond_hand_prob[hand_id['AA'],hand_id['KQs']],2*4/50/49)
-assert allclose(cond_hand_prob[hand_id['AA'],hand_id['KQo']],2*4/50*3/49)
-assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AKs']],2*3/50/49)
-assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AKo']],2*3/50*2/49)
-assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AQs']],2*3/50/49)
-assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['AQo']],2*3/50*3/49)
-assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['QJs']],2*4/50/49)
-assert allclose(cond_hand_prob[hand_id['AKs'],hand_id['QJo']],2*4/50*3/49)
-assert allclose(cond_hand_prob[hand_id['AKo'],hand_id['AKo']],2/50*3/49+2*2/50*2/49)
-assert allclose(cond_hand_prob[hand_id['AKo'],hand_id['AQo']],2*3/50*3/49)
-assert allclose(cond_hand_prob[hand_id['AKo'],hand_id['QJo']],2*4/50*3/49)
+R = rational
+assert exact_hand_prob[hand_id['AA']]==R(1)/13*3/51
+assert exact_hand_prob[hand_id['AKs']]==R(2)/13/51
+assert exact_hand_prob[hand_id['AKo']]==R(2)/13*3/51
+assert exact_cond_hand_prob[hand_id['AA'],hand_id['AA']]==R(2)/50*1/49
+assert exact_cond_hand_prob[hand_id['AA'],hand_id['KK']]==R(4)/50*3/49
+assert exact_cond_hand_prob[hand_id['AA'],hand_id['AKs']]==R(2)*2/50/49
+assert exact_cond_hand_prob[hand_id['AA'],hand_id['AKo']]==R(2)*2/50*3/49
+assert exact_cond_hand_prob[hand_id['AA'],hand_id['KQs']]==R(2)*4/50/49
+assert exact_cond_hand_prob[hand_id['AA'],hand_id['KQo']]==R(2)*4/50*3/49
+assert exact_cond_hand_prob[hand_id['AKs'],hand_id['AKs']]==R(2)*3/50/49
+assert exact_cond_hand_prob[hand_id['AKs'],hand_id['AKo']]==R(2)*3/50*2/49
+assert exact_cond_hand_prob[hand_id['AKs'],hand_id['AQs']]==R(2)*3/50/49
+assert exact_cond_hand_prob[hand_id['AKs'],hand_id['AQo']]==R(2)*3/50*3/49
+assert exact_cond_hand_prob[hand_id['AKs'],hand_id['QJs']]==R(2)*4/50/49
+assert exact_cond_hand_prob[hand_id['AKs'],hand_id['QJo']]==R(2)*4/50*3/49
+assert exact_cond_hand_prob[hand_id['AKo'],hand_id['AKo']]==R(2)/50*3/49+R(2)*2/50*2/49
+assert exact_cond_hand_prob[hand_id['AKo'],hand_id['AQo']]==R(2)*3/50*3/49
+assert exact_cond_hand_prob[hand_id['AKo'],hand_id['QJo']]==R(2)*4/50*3/49
+
+# Approximate
+approx_win = exact_win.astype(float)
+approx_hand_prob = exact_hand_prob.astype(float)
+approx_hand_hand_prob = exact_hand_hand_prob.astype(float)
+approx_cond_hand_prob = exact_cond_hand_prob.astype(float)
 
 # Switch to deterministic outcomes
 if 0:
@@ -132,33 +139,36 @@ if 0:
     rank = sorted(i,key=lambda i:outcome[i])
     print 'hand rank = %s'%(' '.join(hands[i] for i in rank))
 
-def check_payoff_slow(bet,alice,bob):
-    payoff = 0
-    for ha in xrange(len(hands)):
-        for hb in xrange(len(hands)):
-            prob = hand_hand_prob[ha,hb]
-            if alice[ha]:
-                if bob[hb]:
-                    payoff += (1+bet)*(2*win[ha,hb]-1)*prob
-                else:
-                    payoff += prob
-    return payoff
-
 def if_(c,a,b):
     return c*a+(1-c)*b # Use multiplication in order to work for all probabilities in [0,1]
 
-def check_payoff(bet,alice,bob):
-    return sum(hand_hand_prob*alice.reshape(-1,1)*if_(bob.reshape(1,-1),(1+bet)*(2*win-1),1))
+def check_payoff(bet,alice,bob,exact=True):
+    if exact:
+        hand_hand_prob,win = exact_hand_hand_prob,exact_win
+    else:
+        bet = float(bet)
+        hand_hand_prob,win = approx_hand_hand_prob,approx_win
+    return sum(hand_hand_prob*alice.reshape(-1,1)*if_(bob.reshape(1,-1),(1+bet)*(win-win.T),1))
 
-def alice_payoff(bet,bob):
+def alice_payoff(bet,bob,exact=True):
     "Alice's expected return from calling with each possible hand"
-    return sum(cond_hand_prob*((1-bob.reshape(1,-1)) + (1+bet)*bob.reshape(1,-1)*(2*win-1)), axis=1)
+    if exact:
+        cond_hand_prob,win = exact_cond_hand_prob,exact_win
+    else:
+        bet = float(bet)
+        cond_hand_prob,win = approx_cond_hand_prob,approx_win
+    return sum(cond_hand_prob*if_(bob.reshape(1,-1),(1+bet)*(win-win.T),1), axis=1)
 
-def bob_payoff(bet,alice):
+def bob_payoff(bet,alice,exact=True):
     "Bob's expected return from calling with each possible hand"
+    if exact:
+        hand_hand_prob,win = exact_hand_hand_prob,exact_win
+    else:
+        bet = float(bet)
+        hand_hand_prob,win = approx_hand_hand_prob,approx_win
     hand_hand_call_prob = alice.reshape(1,-1)*hand_hand_prob
     inv_cond_hand_prob = hand_hand_call_prob / hand_hand_call_prob.sum(axis=1).reshape(-1,1)
-    return sum(inv_cond_hand_prob*((2+bet)*win-bet*win.T), axis=1)
+    return sum(inv_cond_hand_prob*(1+(1+bet)*(win-win.T)), axis=1)
 
 def always_call():
     alice = ones(len(hands),dtype=int)
@@ -182,8 +192,8 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
         if verbose:
             print 'equity range = %g %g'%(bounds[0],bounds[1])
         # Make at most one change to Alice's strategy
-        payoff = alice_payoff(bet,bob)
-        bounds[1] = min(bounds[1],dot(hand_prob,maximum(0,payoff))) # Bob can hold Alice to below this
+        payoff = alice_payoff(bet,bob,exact=0)
+        bounds[1] = min(bounds[1],dot(approx_hand_prob,maximum(0,payoff))) # Bob can hold Alice to below this
         error = payoff*((payoff>0)*(1-alice) - (payoff<0)*alice)
         h = argmax(error)
         if error[h]:
@@ -193,9 +203,9 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
                 print 'Alice should%s call with %s'%(('' if alice[h] else "n't"),hands[h])
             done = 0
         # Make at most one change to Bob's strategy
-        payoff = bob_payoff(bet,alice)
+        payoff = bob_payoff(bet,alice,exact=0)
         error = payoff*((payoff>0)*(1-bob) - (payoff<0)*bob)
-        bounds[0] = max(bounds[0],check_payoff(bet,alice,payoff>0)) # Alice can hold Bob to above this
+        bounds[0] = max(bounds[0],check_payoff(bet,alice,payoff>0,exact=0)) # Alice can hold Bob to above this
         h = argmax(error)
         if error[h]:
             bob = bob.copy()
@@ -231,10 +241,12 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
     bobs = [s[1] for s in strategies]
     while 1:
         # Compute Nash equilibrium ranging over our current list of Alice's and Bob's strategies
-        payoff = empty((len(alices),len(bobs)))
+        print 'computing payoffs...'
+        payoff = empty((len(alices),len(bobs)),rational)
         for a,alice in enumerate(alices):
             for b,bob in enumerate(bobs):
-                payoff[a,b] = check_payoff(bet,alice,bob)
+                payoff[a,b] = check_payoff(bet,alice,bob,exact=1)
+        print 'computing payoffs...done'
         nash,alice,bob = zero_sum_nash_equilibrium(payoff)
         alice = sum(a*s for a,s in zip(alice,alices))
         bob = sum(b*s for b,s in zip(bob,bobs))
@@ -252,20 +264,21 @@ def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):
             break
     # Verify that we've found the Nash equilibrium
     equity = check_payoff(bet,alice,bob)
-    assert allclose(equity,nash)
+    assert equity==nash
     assert bounds[0]-1e10<=equity<=bounds[1]+1e10
-    print 'first error = %g'%(check_payoff(bet,alice,bob_payoff(bet,alice)>0)-equity)
-    assert allclose(equity,check_payoff(bet,alice,bob_payoff(bet,alice)>0))
-    print 'second error = %g'%(check_payoff(bet,alice_payoff(bet,bob)>0,bob)-equity)
-    assert allclose(equity,check_payoff(bet,alice_payoff(bet,bob)>0,bob))
+    if 0:
+        print 'first error = %g'%(check_payoff(bet,alice,bob_payoff(bet,alice)>0)-equity)
+        print 'second error = %g'%(check_payoff(bet,alice_payoff(bet,bob)>0,bob)-equity)
+    assert equity==check_payoff(bet,alice,bob_payoff(bet,alice)>0)
+    assert equity==check_payoff(bet,alice_payoff(bet,bob)>0,bob)
     # Print out nice results
     if verbose:
         def str_strategy(strat,payoff):
             order = sorted(arange(len(strat)),key=lambda i:-payoff[i])
-            return ' '.join(('' if allclose(strat[i],1) else '%g*'%strat[i])+hands[i] for i in order if strat[i]>1e-5)
+            return ' '.join(('' if strat[i]==1 else '%s*'%strat[i])+hands[i] for i in order if strat[i])
         print
-        print 'Alice: %d hands, %s'%(sum(alice>1e-5),str_strategy(alice,alice_payoff(bet,bob)))
-        print 'Bob: %d hands, %s'%(sum(bob>1e-5),str_strategy(bob,bob_payoff(bet,alice)))
+        print 'Alice: %d hands, %s'%(sum(alice>0),str_strategy(alice,alice_payoff(bet,bob)))
+        print 'Bob: %d hands, %s'%(sum(bob>0),str_strategy(bob,bob_payoff(bet,alice)))
     return equity,alice,bob
 
 def poker_nash_equilibrium_remember(bet,last=list(always_call())):
@@ -273,9 +286,15 @@ def poker_nash_equilibrium_remember(bet,last=list(always_call())):
     last[:] = round_(alice),round_(bob)
     return equity
 
+bet = options.bet
+try:
+    bet = rational(bet)
+except TypeError:
+    bet = float(bet) 
+
 if options.plot:
-    bet = arange(options.n)
-    bet = options.bet/bet[-1]*bet
+    n = arange(options.n)
+    bet = bet/n[-1]*n
     print 'bets = %s'%bet
     s = list(always_call())
     def nash(b):
@@ -291,15 +310,11 @@ if options.plot:
     pylab.show()
 elif options.max:
     import scipy.optimize
-    bet,equity,_,evals = scipy.optimize.fminbound(lambda b:-poker_nash_equilibrium_remember(b),0,options.bet,full_output=1,xtol=1e-8)
+    bet,equity,_,evals = scipy.optimize.fminbound(lambda b:-poker_nash_equilibrium_remember(b),0,bet,full_output=1,xtol=1e-8)
     print "\nAlice's preferred bet = %g"%bet
     print "Alice's equity = %g"%-equity
     print "Nash equilibrium computations = %d"%evals
 else:
-    bet = options.bet
     equity,alice,bob = poker_nash_equilibrium(bet)
-    assert allclose(equity,check_payoff(bet,alice,bob))
-    print "Alice's exact payoff = %g"%equity
-    if 0:
-        print "Alice's exact payoff = %g"%check_payoff_slow(bet,alice,bob)
+    print "Alice's exact payoff = %s (%g)"%(equity,equity)
 

@@ -62,13 +62,22 @@ To emphasize, the bet amount b is frozen in advance; Alice does not get to choos
 `heads-up` has the following dependencies
 
 * [python](http://python.org)
-* [numpy](http://numpy.scipy.org)
+* [numpy](http://numpy.scipy.org): Requires a patched version (see below)
 * [scipy](http://www.scipy.org)
 * [matplotlib](http://matplotlib.sourceforge.net)
 
 On a Mac, these can be obtained through [MacPorts](http://www.macports.org) via
 
     sudo port install py26-numpy py26-scipy py26-matplotlib
+
+*Update*: In order to take advantage of the exact probabilities provided by `exact`,
+`heads-up` uses a fixed precision rational number dtype that I wrote for numpy.
+Unfortunately, this uncovered several bugs in numpy.  Therefore, in order to use
+`heads-up`, you'll need to get numpy from my temporary fork here:
+
+    https://github.com/girving/numpy/tree/fixuserloops
+
+These changes should be incorporated in the main numpy git repo fairly soon.
 
 ### Usage
 

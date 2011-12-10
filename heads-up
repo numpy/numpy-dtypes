@@ -18,6 +18,7 @@ parser.add_option('--max',action='store_true',help="maximize Alice's equity as a
 parser.add_option('--donkey',type=int,default=0,help="compute optimum strategy against an always all-in player, with a given total chip count")
 parser.add_option('-d','--deterministic',action='store_true',help="switch to deterministic outcomes")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
+parser.add_option('-v','--verbose',action='store_true',help="print or plot extra information")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')
 
@@ -390,8 +391,21 @@ elif options.donkey:
     t = arange(1,total)
     pylab.plot(t,equity[0,t],'g',label='SB equity')
     pylab.plot(t,equity[1,t],'b',label='BB equity')
-    pylab.plot(t,call_prob[0],'mo',label='SB call prob')
-    pylab.plot(t,call_prob[1],'ro',label='BB call prob')
+    if options.verbose:
+        win = sum(approx_cond_hand_prob*approx_win,axis=1)
+        ordered_hands = argsort(win)
+        hand_rank = empty_like(ordered_hands)
+        hand_rank[ordered_hands] = arange(len(hands))
+        for s in 0,1:
+            for t in xrange(1,total,3):
+                min_rank = hand_rank[nonzero(call[s,t-1])[0]].min()
+                pylab.text(t,call_prob[s,t-1],hands[ordered_hands[min_rank]],horizontalalignment='center',verticalalignment='center',size='xx-small',color='mr'[s])
+        # For legend purposes
+        pylab.plot([],[],'mo',label='SB worst call hand')
+        pylab.plot([],[],'ro',label='BB worst call hand')
+    else:
+        pylab.plot(t,call_prob[0],'mo',label='SB call prob')
+        pylab.plot(t,call_prob[1],'ro',label='BB call prob')
     pylab.legend(loc='upper center')
     pylab.xlabel("Alice's stack size")
     pylab.ylabel("Equity or call probability")

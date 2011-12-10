@@ -16,6 +16,7 @@ parser.add_option('-b','--bet',type=str,default=0,help='set a fixed bet level')
 parser.add_option('--plot',action='store_true',help="plot Alice's equity for bets in [0,bet]")
 parser.add_option('--max',action='store_true',help="maximize Alice's equity as a function of bet in [0,bet]")
 parser.add_option('--donkey',type=int,default=0,help="compute optimum strategy against an always all-in player, with a given total chip count")
+parser.add_option('-d','--deterministic',action='store_true',help="switch to deterministic outcomes")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')
@@ -136,22 +137,20 @@ assert exact_cond_hand_prob[hand_id['AKo'],hand_id['AKo']]==R(2)/50*3/49+R(2)*2/
 assert exact_cond_hand_prob[hand_id['AKo'],hand_id['AQo']]==R(2)*3/50*3/49
 assert exact_cond_hand_prob[hand_id['AKo'],hand_id['QJo']]==R(2)*4/50*3/49
 
+# Switch to deterministic outcomes
+if options.deterministic:
+    outcome = dot(exact_win,exact_hand_prob)
+    exact_win[...] = outcome.reshape(-1,1)>outcome.reshape(1,-1)
+    i = arange(len(outcome))
+    assert all(0<=exact_win) and all(exact_win<=1)
+    rank = sorted(i,key=lambda i:outcome[i])
+    print 'hand rank = %s'%(' '.join(hands[i] for i in rank))
+
 # Approximate
 approx_win = exact_win.astype(float)
 approx_hand_prob = exact_hand_prob.astype(float)
 approx_hand_hand_prob = exact_hand_hand_prob.astype(float)
 approx_cond_hand_prob = exact_cond_hand_prob.astype(float)
-
-# Switch to deterministic outcomes
-if 0:
-    outcome = dot(win,hand_prob)
-    win[...] = outcome.reshape(-1,1)>outcome.reshape(1,-1)
-    i = arange(len(outcome))
-    win[i,i] = .5
-    assert all(0<=win) and all(win<=1)
-    assert all(abs(win+win.T-1)<=1e-10)
-    rank = sorted(i,key=lambda i:outcome[i])
-    print 'hand rank = %s'%(' '.join(hands[i] for i in rank))
 
 def if_(c,a,b):
     return c*a+(1-c)*b # Use multiplication in order to work for all probabilities in [0,1]

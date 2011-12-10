@@ -34,6 +34,8 @@ namespace {
 const char show_card[13+1] = "23456789TJQKA";
 const char show_suit[4+1] = "shdc";
 
+bool do_nothing = false;
+
 cards_t read_cards(const char* s) {
     size_t n = strlen(s);
     assert(!(n&1));
@@ -423,7 +425,7 @@ outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
                         if (!((cards_t(1)<<c)&hand_cards))
                             free[i++] = cards_t(1)<<c;
                     // Consider all possible sets of shared cards
-                    cache[sig] = compare_cards_opencl(device, alice_cards, bob_cards, free);
+                    cache[sig] = do_nothing?1:compare_cards_opencl(device, alice_cards, bob_cards, free);
                     #pragma omp critical
                     total_comparisons += NUM_FIVE_SUBSETS; 
                 }
@@ -439,6 +441,7 @@ outcomes_t compare_hands(size_t device, hand_t alice, hand_t bob) {
 }
 
 void show_comparison(hand_t alice, hand_t bob,outcomes_t o) {
+    if (do_nothing) return;
     cout<<alice<<" vs. "<<bob<<":\n"
           "  Alice: "<<o.alice<<"/"<<o.total()<<" = "<<(double)o.alice/o.total()
         <<"\n  Bob:   "<<o.bob<<"/"<<o.total()<<" = "<<(double)o.bob/o.total()
@@ -660,6 +663,7 @@ void usage(const char* program) {
           "  -a, --all      use all available OpenCL devices (GPUs and CPUs)\n"
           "  -g, --gpu      use only GPUs\n"
           "  -c, --cpu      use only CPUs\n"
+          "  -n, --nop      count the number of hands we'd evaluate, but don't actually compute\n"
           "commands:\n"
           "  hands          print list of two card hold'em hands\n"
           "  test [n]       run some moderately expensive regression tests, with an optional size parameter\n"
@@ -679,13 +683,15 @@ int main(int argc, char** argv) {
         {"cpu",no_argument,0,'c'},
         {"gpu",no_argument,0,'g'},
         {"all",no_argument,0,'a'},
+        {"nop",no_argument,0,'n'},
         {0,0,0,0}};
     int ch;
-    while ((ch = getopt_long(argc,argv,"cga",options,0)) != -1)
+    while ((ch = getopt_long(argc,argv,"cgan",options,0)) != -1)
          switch (ch) {
              case 'c': device_types = CL_DEVICE_TYPE_CPU; break;
              case 'g': device_types = CL_DEVICE_TYPE_GPU; break;
              case 'a': device_types = CL_DEVICE_TYPE_ALL; break;
+             case 'n': do_nothing = true; break;
              default: usage(program); return 1;
     }
     argc -= optind;

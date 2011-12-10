@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from __future__ import division
+import os
 import re
 import sys
 import optparse
@@ -30,29 +31,41 @@ def die(s):
 
 # Load exact win probabilities.  Important: win[a,b]+win[b,a]<1 due to ties, unlike the approximate version above
 def parse_exact_matchups():
-    matchup_pattern = re.compile(r'^(\w+)\s+vs\.\s+(\w+):$')
-    entry_pattern = re.compile(r'^\s+(Alice|Bob|Tie):\s+(\d+/\d+) = ([\d.]+)$')
-    lines = open('exact.txt').readlines()
-    assert len(lines)%4==0
-    win = zeros((len(hands),)*2,dtype=rational)
-    for i in xrange(len(lines)//4):
-        m = matchup_pattern.match(lines[4*i])
-        if not m: die('Weird matchup line: %s'%lines[4*i][:-1])
-        h0,h1 = hand_id[m.group(1)],hand_id[m.group(2)]
-        def entry(j,name):
-            m = entry_pattern.match(lines[4*i+j+1])
-            if not m: die('Weird entry line: %s'%lines[4*i+j+1][:-1])
-            assert m.group(1)==name
-            return rational(m.group(2))
-        w,l,t= entry(0,'Alice'),entry(1,'Bob'),entry(2,'Tie')
-        assert w+l+t==1
-        win[h0,h1] = w
-        win[h1,h0] = l
-    assert all(win>0)
-    return win
+    file = 'exact.npz'
+    if not os.path.exists(file):
+        matchup_pattern = re.compile(r'^(\w+)\s+vs\.\s+(\w+):$')
+        entry_pattern = re.compile(r'^\s+(Alice|Bob|Tie):\s+(\d+/\d+) = ([\d.]+)$')
+        lines = open('exact.txt').readlines()
+        assert len(lines)%4==0
+        win = zeros((len(hands),)*2,dtype=rational)
+        for i in xrange(len(lines)//4):
+            m = matchup_pattern.match(lines[4*i])
+            if not m: die('Weird matchup line: %s'%lines[4*i][:-1])
+            h0,h1 = hand_id[m.group(1)],hand_id[m.group(2)]
+            def entry(j,name):
+                m = entry_pattern.match(lines[4*i+j+1])
+                if not m: die('Weird entry line: %s'%lines[4*i+j+1][:-1])
+                assert m.group(1)==name
+                return rational(m.group(2))
+            w,l,t= entry(0,'Alice'),entry(1,'Bob'),entry(2,'Tie')
+            assert w+l+t==1
+            win[h0,h1] = w
+            win[h1,h0] = l
+        assert all(win>0)
+        savez_compressed(file,n=numerator(win),d=denominator(win))
+        return win
+    else:
+        data = load(file)
+        win = rationals(data['n'])/data['d']
+        return win
 exact_win = parse_exact_matchups()
 
+def ahash(*args):
+    return hash(''.join(a.tostring() for a in args))
+
+assert ahash(exact_win)==7392642596451405510
 print 'denominator = %s'%lcm.reduce(denominator(exact_win.ravel()))
+
 
 # Build a map from pairs of cards (represented as 4*id+suit) to hand ids
 def compute_cards_to_hand():
@@ -80,9 +93,7 @@ assert sum(cards_to_hand<0)==52
 def hand_probabilities():
     # Count how many times h occurs in cards_to_hand for each h
     def prob(x):
-        prob = zeros(len(hands),rational)
-        for h in xrange(len(hands)):
-            prob[h] = sum(x==h)
+        prob = sum(x.reshape(1,-1)==arange(len(hands)).reshape(-1,1),axis=1)
         return rationals(prob)/sum(prob)
     hand_prob = prob(cards_to_hand)
 
@@ -174,9 +185,6 @@ def always_call():
     alice = ones(len(hands),dtype=int)
     bob = ones(len(hands),dtype=int)
     return alice,bob
-
-def ahash(*args):
-    return hash(''.join(a.tostring() for a in args))
 
 # Converge to heads up Nash equilibrium from an initial strategy guess
 def poker_nash_equilibrium(bet,(alice,bob)=always_call(),n=1000,verbose=1):

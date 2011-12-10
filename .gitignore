@@ -5,3 +5,4 @@ exact
 build
 *.so
 *.dSYM
+*.npz

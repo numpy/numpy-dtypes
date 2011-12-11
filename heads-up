@@ -19,6 +19,7 @@ parser.add_option('--donkey',type=int,default=0,help="compute optimum strategy a
 parser.add_option('-d','--deterministic',action='store_true',help="switch to deterministic outcomes")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 parser.add_option('-v','--verbose',action='store_true',help="print or plot extra information")
+parser.add_option('-p','--profile',action='store_true',help="skip plotting for profiling purposes")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')
 
@@ -383,6 +384,8 @@ elif options.max:
 elif options.donkey:
     total = options.donkey
     equity,call = donkey_strategy(total)    
+    if options.profile:
+        sys.exit(0)
     call_prob = sum(approx_hand_prob.reshape(1,1,-1)*call,axis=-1)
     t = total//2
     print 'With %d chips in the small blind, Alice calls %g of the time, with equity %g'%(t,call_prob[0,t],equity[0,t])

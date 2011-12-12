@@ -16,6 +16,7 @@ parser.add_option('-b','--bet',type=str,default=0,help='set a fixed bet level')
 parser.add_option('--plot',action='store_true',help="plot Alice's equity for bets in [0,bet]")
 parser.add_option('--max',action='store_true',help="maximize Alice's equity as a function of bet in [0,bet]")
 parser.add_option('--donkey',type=int,default=0,help="compute optimum strategy against an always all-in player, with a given total chip count")
+parser.add_option('--random',action='store_true',help="print win/lose/tie probabilities of each hand vs. a random hand")
 parser.add_option('-d','--deterministic',action='store_true',help="switch to deterministic outcomes")
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 parser.add_option('-v','--verbose',action='store_true',help="print or plot extra information")
@@ -368,6 +369,22 @@ def donkey_strategy(total):
         print "iteration %d, Alice's small blind equity with %d chips is %g"%(iter,total//2,equity[0,total//2])
     return equity,call
 
+def limit_donkey_equity(k):
+    """In the case of infinite stack size, Alice's optimal strategy is simply to wait for AA.  The resulting
+    win probability function satisfies
+        p[t] = 0, t <= 0
+        p[t] = 1, t >= 1
+        p[t] = a p[2t] + (1-a) p[2t-1], 0 < t < 1
+    where a is the probability of winning with AA (splitting ties).  Important properties:
+        1. p is continuous.
+        2. If t is a dyadic rational, p[t] is a function of simpler dyadic rationals.
+    This provides an easy, superfast way of computing p."""
+    a = 893604787/1048786200
+    p = zeros(1)
+    for k in xrange(k):
+        p = hstack([a*p,a+(1-a)*p])
+    return hstack([p,1])
+
 bet = options.bet
 try:
     bet = rational(bet)
@@ -396,9 +413,9 @@ elif options.max:
     print "\nAlice's preferred bet = %g"%bet
     print "Alice's equity = %g"%-equity
     print "Nash equilibrium computations = %d"%evals
-elif options.donkey:
+elif options.donkey>0:
     total = options.donkey
-    equity,call = donkey_strategy(total)    
+    equity,call = donkey_strategy(total)
     call_hash = ahash(call)
     expected = {200:8011577361726862008,2000:-5197011106140037419,20000:654298559373924011}.get(total,'unknown')
     print 'call hash: expected %s, got %d'%(expected,call_hash)
@@ -417,6 +434,11 @@ elif options.donkey:
         ordered_hands = argsort(win)
         hand_rank = empty_like(ordered_hands)
         hand_rank[ordered_hands] = arange(len(hands))
+        if 0:
+            print "Alice's calling hands:"
+            for i in t:
+                for s in 0,1:
+                    print '  %3d %s, %s: %s'%(i,('chip' if i==1 else 'chips'),('SB','BB')[s],' '.join(hands[h] for h in sorted(nonzero(call[s,i-1])[0],key=lambda h:-win[h])))
         for s in 0,1:
             for t in xrange(1,total,3):
                 min_rank = hand_rank[nonzero(call[s,t-1])[0]].min()
@@ -432,7 +454,25 @@ elif options.donkey:
     pylab.ylabel("Equity or call probability")
     pylab.title('Optimal strategy vs. an always all-in player')
     pylab.show()
+elif options.donkey<0:
+    k = -options.donkey
+    equity = limit_donkey_equity(k)
+    t = arange(2**k+1)/2**k
+    import pylab
+    pylab.plot(t,equity,'b')
+    pylab.xlabel("Alice's stack fraction")
+    pylab.ylabel("Alice's equity")
+    pylab.title('Optimal equity vs. an always all-in player with infinite stack sizes')
+    pylab.show()
+elif options.random:
+    win = sum(exact_cond_hand_prob*exact_win,axis=1)
+    lose = sum(exact_cond_hand_prob*exact_win.T,axis=1)
+    tie = 1-win-lose
+    ordered_hands = argsort(win)
+    print 'Probabilities vs. a random hand:'
+    for h in ordered_hands[::-1]:
+        print '  %3s : win %s, lose %s, tie %s, win+tie/2 %s'%(hands[h],win[h],lose[h],tie[h],win[h]+tie[h]/2)
+        #print '  %3s : win %g, lose %g, tie %g, win+tie/2 %g'%(hands[h],win[h],lose[h],tie[h],win[h]+tie[h]/2)
 else:
     equity,alice,bob = poker_nash_equilibrium(bet)
     print "Alice's exact payoff = %s (%g)"%(equity,equity)
-

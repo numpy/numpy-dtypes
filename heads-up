@@ -328,6 +328,7 @@ def donkey_strategy(total):
     def hand_reshape(x):
         return x.reshape((2,total-1,1))
     for iter in xrange(1000000):
+        print 'strategizing...'
         equity_fold = equity[1-s,maximum(0,t-1-s)]
         equity_call = win*hand_reshape(equity[1-s,minimum(2*t,total)])+tie*hand_reshape(equity[1-s,t])+lose*hand_reshape(equity[1-s,maximum(0,2*t-total)])
         new_call = equity_call>hand_reshape(equity_fold)
@@ -335,17 +336,31 @@ def donkey_strategy(total):
             print 'converged'
             break
         call = new_call
-        A = zeros((2,total+1,2,total+1))
-        A[s,t,s,t] -= 1
-        A[s,t,1-s,maximum(0,t-1-s)] += sum(approx_hand_prob.reshape(1,1,-1)*(1-call),axis=-1)
+
+        print 'building...'
+        import scipy.sparse
+        import scipy.sparse.linalg
+        ii,jj,vv = [],[],[]
+        def add(i,j,v):
+            i,j = i+0*j,j+0*i # broadcast
+            if not ndim(v): v = v+0*i
+            assert i.shape==j.shape==v.shape
+            ii.append(ravel(i))
+            jj.append(ravel(j))
+            vv.append(ravel(v))
+        add(s+2*t,s+2*t,-1)
+        add(s+2*t,1-s+2*maximum(0,t-1-s),sum(approx_hand_prob.reshape(1,1,-1)*(1-call),axis=-1))
         prob_call = approx_hand_prob.reshape(1,1,-1)*call
-        A[s,t,1-s,minimum(2*t,total)] += sum(prob_call*win,axis=-1)
-        A[s,t,1-s,t] += sum(prob_call*tie,axis=-1)
-        A[s,t,1-s,maximum(0,2*t-total)] += sum(prob_call*lose,axis=-1)
-        assert allclose(A[:,1:-1,:,:].reshape((2,total-1,-1)).sum(axis=-1),0)
-        n = 2*(total-1)
+        add(s+2*t,1-s+2*minimum(2*t,total),sum(prob_call*win,axis=-1))
+        add(s+2*t,1-s+2*t,sum(prob_call*tie,axis=-1))
+        add(s+2*t,1-s+2*maximum(0,2*t-total),sum(prob_call*lose,axis=-1))
+        As = scipy.sparse.coo_matrix((hstack(vv),vstack([hstack(ii),hstack(jj)])),(2*total+2,2*total+2)).tocsr()
         new_equity = equity.copy()
-        new_equity[s,t] = linalg.solve(A[:,1:-1,:,1:-1].reshape(n,n),-A[:,1:-1,:,total].reshape((n,2)).sum(axis=1)).reshape(2,total-1)
+        b = -As[2:-2,-2:].sum(axis=1)
+        A = As[2:-2,2:-2]
+        print 'solving...'
+        new_equity[s,t] = scipy.sparse.linalg.spsolve(A,b).reshape(total-1,2).T
+
         assert all(-1e-7<new_equity)
         assert all(new_equity<1+1e-7)
         assert all(new_equity+1e-7>equity)
@@ -384,6 +399,9 @@ elif options.max:
 elif options.donkey:
     total = options.donkey
     equity,call = donkey_strategy(total)    
+    call_hash = ahash(call)
+    expected = {200:8011577361726862008,2000:-5197011106140037419,20000:654298559373924011}.get(total,'unknown')
+    print 'call hash: expected %s, got %d'%(expected,call_hash)
     if options.profile:
         sys.exit(0)
     call_prob = sum(approx_hand_prob.reshape(1,1,-1)*call,axis=-1)
@@ -409,7 +427,7 @@ elif options.donkey:
     else:
         pylab.plot(t,call_prob[0],'mo',label='SB call prob')
         pylab.plot(t,call_prob[1],'ro',label='BB call prob')
-    pylab.legend(loc='upper center')
+    pylab.legend(loc=('upper center' if total<=500 else 'center'))
     pylab.xlabel("Alice's stack size")
     pylab.ylabel("Equity or call probability")
     pylab.title('Optimal strategy vs. an always all-in player')

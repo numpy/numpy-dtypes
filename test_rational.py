@@ -26,7 +26,7 @@ def test_parse():
     assert rational("  -3/5 ")==R(-3,5)
     for s in '-4 5','1/0','1/-1','1/':
         try:
-            assert rational(s)
+            rational(s)
             assert False
         except ValueError:
             pass
@@ -259,5 +259,6 @@ def test_numpy_errors():
         pass
 
 if __name__=='__main__':
+    test_parse()
     test_numpy_cast()
     test_numpy_basic()

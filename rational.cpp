@@ -274,7 +274,7 @@ template<> inline rational cast(bool b) { return b; }
 bool scan_rational(const char*& s, rational& x) {
     long n,d;
     int offset;
-    if (!sscanf(s,"%ld%n",&n,&offset))
+    if (sscanf(s,"%ld%n",&n,&offset)<=0)
         return false;
     const char* ss = s+offset;
     if (*ss!='/') {
@@ -283,7 +283,7 @@ bool scan_rational(const char*& s, rational& x) {
         return true;
     }
     ss++;
-    if (!sscanf(ss,"%ld%n",&d,&offset) || d<=0)
+    if (sscanf(ss,"%ld%n",&d,&offset)<=0 || d<=0)
         return false;
     s = ss+offset;
     x = rational(n,d);

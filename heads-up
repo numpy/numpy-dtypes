@@ -603,12 +603,13 @@ elif options.random:
     for h in ordered_hands[::-1]:
         print '  %3s : win %s, lose %s, tie %s, win+tie/2 %s'%(hands[h],win[h],lose[h],tie[h],win[h]+tie[h]/2)
         #print '  %3s : win %g, lose %g, tie %g, win+tie/2 %g'%(hands[h],win[h],lose[h],tie[h],win[h]+tie[h]/2)
-elif options.variable:
-    bets = bet/options.variable*arange(options.variable+1)
+elif options.variable or options.bets:
     sb = options.sb
     bb = options.bb
     if options.bets:
         bets = fromstring(options.bets,sep=',')
+    else:
+        bets = bet/options.variable*arange(options.variable+1)
     print 'blinds = %g %g'%(sb,bb)
     print 'bets = %s\n'%bets
     equity,alice,bob,alice_equity,bob_equity = variable_bet_nash_equilibrium(sb,bb,bets)

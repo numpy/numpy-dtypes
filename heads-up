@@ -430,45 +430,43 @@ def variable_bet_nash_equilibrium(sb,bb,bets):
     """Since probabilities sum to one, we have sum_i Pij <= 1, = Qik <= 1.  The scale of P will have to vary, so add an extra
     scalar element u to p, and enforce sum_i Pij <= u instead.  In matrix form, these constraints are
         Bp <= 0, B(j,ij) = 1, B(j,-1) = -1
-        Cq <= c, C(ik,ik) = 1, cik = 1"""
+        q <= 1"""
     B = sparse.hstack([sparse.csr_matrix((ones(len(bets)*len(hands)),arange(len(bets)*len(hands)).reshape(len(bets),-1).T.ravel(),len(bets)*arange(len(hands)+1))),-ones((len(hands),1))])
-    C = speye(len(bets)*len(hands))
-    c = ones(len(bets)*len(hands))
     g = hstack([g,mu]) # Absorb mu into g
     G = sparse.vstack([G,zeros((1,len(bets)*len(hands)))])
     """Before scaling, the problem we need to solve is
 
-        A = max_{p>=0, Bp<=0, u=1} min_{q>=0, Cq<=c} (mu + g'p + p' G q)
+        A = max_{p>=0, Bp<=0, u=1} min_{q>=0, q<=1} (mu + g'p + p' G q)
 
     Allowing the scale variable u to grow until g'p + p' G q >= 1, we get
 
-        1/A = min u s.t. p>=0, Bp<=0 (inf_{q>=0, Cq<=c} p' G q)>=1-g'p
+        1/A = min u s.t. p>=0, Bp<=0 (inf_{q>=0, q<=1} p' G q)>=1-g'p
 
     Following Tomas Tinoco De Rubira's email, we will dualize the universally quantified inequality into an existentially qualified inequality.  The primal problem is
 
         min   (G'p)'q
         s.t.  q >= 0
-        s.t.  Cq <= c
+        s.t.  q <= 1
 
     which dualizes to
     
-        max   -c'z
-        s.t.  C'z + G'p >= 0
+        max   -1'z
+        s.t.  z + G'p >= 0
               z >= 0
 
     Strong duality gives
 
-        (inf_{q>=0, Cq<=c} p' G q) = (sup_{z>=0, G' p + C' z >= 0} -c' z)
-        (1-g'p<=inf_{q>=0, Cq<=c} p^T G q) iff exists z>=0 s.t. g'p - c'z >= 1, G' p + C' z >= 0
+        (inf_{q>=0, q<=1} p' G q) = (sup_{z>=0, G' p + z >= 0} -1'z)
+        (1-g'p<=inf_{q>=0, q<=1} p^T G q) iff exists z>=0 s.t. g'p - 1'z >= 1, G' p + z >= 0
 
     and our problem becomes
 
-        1/A = min u s.t. p>=0, z>=0, Bp<=0, g'p - c'z >= 1, G'p + C'z >= 0
-            = min u s.t. p>=0, z>=0, Bp<=0, -g'p + c'z <= -1, -G'p - C'z <= 0
+        1/A = min u s.t. p>=0, z>=0, Bp<=0, g'p - 1'z >= 1, G'p + z >= 0
+            = min u s.t. p>=0, z>=0, Bp<=0, -g'p + 1'z <= -1, -G'p - z <= 0
 
-    Now write x = [p,z], and construct H = [-1,[-G.T,-C.T],[-g',c'],[B,0]], h = [0,0,-1,0]:"""
+    Now write x = [p,z], and construct H = [-1,[-G.T,-1],[-g',1'],[B,0]], h = [0,0,-1,0]:"""
     pn,qn = len(bets)*len(hands)+1,len(bets)*len(hands)
-    H = sparse.vstack([-speye(pn+qn),sparse.bmat([[-G.T,-C.T],[sparse.coo_matrix(-g.reshape(1,-1)),c.reshape(1,-1)],[B,None]])])
+    H = sparse.vstack([-speye(pn+qn),sparse.bmat([[-G.T,-speye(qn)],[sparse.coo_matrix(-g.reshape(1,-1)),ones((1,qn))],[B,None]])])
     h = hstack([zeros(pn+2*qn),-1,zeros(len(hands))])
     e = hstack([zeros(pn-1),1,zeros(qn)])
     """Our problem is now
@@ -510,12 +508,12 @@ def variable_bet_nash_equilibrium(sb,bb,bets):
     where y = [y0,y1,y2,y3,y4].  Expanding H'y + e = 0 gives
 
         -y0 - G y2 - g y3 + B' y4 + e = 0
-        -y1 - C y2 + c y3 = 0
+        -y1 - y2 + 1 y3 = 0
 
     or
 
         -G y2 - g y3 + B' y4 + e >= 0
-        C y2 <= c y3
+        y2 <= 1 y3
 
     hinting that perhaps q = y2/y3.  We test this by constructing Alice's optimal strategy assuming Bob's strategy is q = y2/32:"""
     y = solution['z']

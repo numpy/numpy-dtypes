@@ -18,7 +18,7 @@ def rationals(x):
 def sparse_save(file,**kwargs):
     d = {}
     for k,v in kwargs.items():
-        if isinstance(v,(ndarray,str)):
+        if isinstance(v,(ndarray,str,generic)):
             d[k] = v
         elif isinstance(v,sparse.spmatrix):
             v = v.tocsr()
@@ -43,7 +43,13 @@ def sparse_load(file):
             d[k] = v
     return d
 
-def cvxopt_lp(c,G,h,A,b):
+def cvxopt_lp(c,G,h,A=None,b=None):
+    assert (A is None)==(b is None)
+    if A is None:
+        A = zeros((0,len(c)))
+        b = zeros(0)
+    assert G.shape==(len(h),len(c))
+    assert A.shape==(len(b),len(c))
     input = tempfile.NamedTemporaryFile(prefix='cvxopt-in',suffix='.npz') 
     output = tempfile.NamedTemporaryFile(prefix='cvxopt-out',suffix='.npz') 
     sparse_save(input.name,c=c,G=G,h=h,A=A,b=b)
@@ -73,8 +79,21 @@ def spdiag(x):
         total += x.indptr[-1]
     return sparse.csr_matrix((hstack(data),hstack(indices),hstack(offsets+[total])),shape=shape)
 
-def spblocks(x):
-    return sparse.vstack(map(sparse.hstack,x))
-
 def spzeros(m,n):
         return sparse.csr_matrix((m,n))
+
+def speye(m,n=None):
+    if n is None:
+        n = m
+    return sparse.eye(m,n)
+
+def asplit(x,*sizes):
+    if sum(sizes)!=len(x):
+        raise IndexError('expected size %s = %d, got %d'%('+'.join(map(str,sizes)),sum(sizes),len(x)))
+    r = []
+    n = 0
+    for s in sizes:
+        r.append(x[n:n+s])
+        n += s
+    assert n==len(x)
+    return r

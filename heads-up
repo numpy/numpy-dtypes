@@ -397,118 +397,139 @@ def variable_bet_nash_equilibrium(sb,bb,bets):
 
     The set of hands is H, the joint probability of hands x and y is pp(x,y), and the probability that x beats y is w(x,y).  Ignore ties so that w(x,y) + w(y,x) = 1.  I.e.,"""
     pp = approx_hand_hand_prob
+    ps = pp.sum(axis=1)
     w = approx_win + (1-approx_win-approx_win.T)/2
-    """Alice's strategy is a probability Pij of taking action i (fold or bet a given amount) given hand j.  Bob's strategy is a probability Qikl of taking action l (fold or call)
-    given Alice's action i and Bob's hand k.  For convenience, we'll pretend Bob can either fold or call even if Alice folds, so that Q is a rectangular third order tensor.
-    Alice's equity is
+    """Alice's strategy is a probability Pij of betting amount i given hand j.  Bob's strategy is a probability Qik of calling given Alice's bet i and Bob's hand k.
+    We shift all outcomes by shift so that Alice's equity is uniformly positive:
     
-        A = sum_ijk pjk Pij (-sb (i=0) + bb (i>0) Qik0 + (i>0) (bb+bet[i-1]) Qik1 (wjk - wkj))
-          = sum_ijkl pjk Pij Qikl (-sb (i=0) + bb (i>0) (l=0) + (bb+bet[i-1]) (i>0) (l=1) (wjk-wkj))
-          = sum_ijkl Gijkl Pij Qikl
+        A = shift - sb sum_j pj (1-sum_i Pij) + sum_ijk pjk Pij (bb (1-Qik) + Qik (bb+bet[i])(wjk - wkj))
+          = (shift-sb) + sb sum_ij pj Pij + sum_ijk pjk Pij (bb + Qik ((bb+bet[i])(wjk-wkj)-bb))
+          = (shift-sb) + (sb+bb) sum_ij pj Pij + sum_ijk pjk Pij Qik ((bb+bet[i])(wjk-wkj)-bb)
+          = mu + sum_ij gij Pij + sum_ijk Gijk Pij Qik
 
     where
 
-        Gijkl = pjk (-sb (i=0) + bb (i>0) (l=0) + (bb+bet[i-1]) (i>0) (l=1) (wjk-wkj))
-
-    For the scaling trick to work, we need Gijkl > 0, so we add the following shift amount to each of Alice's payoffs:"""
-    shift = max(sb,bb)+max(sb,bb+bets[-1])
-    """Let's construct G:"""
-    fb = hstack([0,bets])
-    i = arange(len(fb)).reshape(-1,1,1,1)
-    j = arange(len(hands)).reshape(1,-1,1,1)
-    k = j.reshape(1,1,-1,1)
-    l = arange(2).reshape(1,1,1,-1)
-    G = pp[j,k]*(shift - sb*(i==0) + bb*(i>0)*(l==0) + (bb+fb[i])*(i>0)*(l==1)*(w[j,k]-w[k,j])) # Flexible indexing is sweet
+        mu = shift-sb
+        gij = (sb+bb) pj
+        Gijk = pjk ((bb+bets[i])(wjk-wkj)-bb)
+        shift = max(sb,bb)+max(sb,bb+bets.max())
+    
+    Let's construct mu, g and G:"""
+    shift = max(sb,bb)+max(sb,bb+bets.max())
+    mu = shift-sb
+    g = (sb+bb)*ps.reshape(1,-1)*ones((len(bets),1))
+    i = arange(len(bets)).reshape(-1,1,1)
+    j = arange(len(hands)).reshape(1,-1,1)
+    k = j.reshape(1,1,-1)
+    G = pp[j,k]*((bb+bets[i])*(w[j,k]-w[k,j])-bb) # Flexible indexing is sweet
     """In order to write the equity as a standard quadratic form, let p = ravel(P), q = ravel(Q), and define a block matrix G by
 
         Gab = G(ij)(ikl) = Gijkl"""
-    G = spdiag(G.reshape((len(fb),len(hands),len(hands)*2)))
-    """Since probabilities sum to one, we have sum_i Pij = sum_l Qikl = 1.  The scale of P will have to vary, so add an extra
-    scalar element u to p, and enforce sum_i Pij = u instead.  In matrix form, these constraints are
-        Bp = b, B(j,ij) = 1, B(j,-1) = -1, bj = 0
-        Cq = c, C(ik,ikl) = 1, cik = 1"""
-    B = sparse.hstack([sparse.csr_matrix((ones(len(fb)*len(hands)),arange(len(fb)*len(hands)).reshape(len(fb),-1).T.ravel(),len(fb)*arange(len(hands)+1))),-ones((len(hands),1))])
-    b = zeros(len(hands))
-    C = sparse.csr_matrix((ones(len(fb)*len(hands)*2),arange(len(fb)*len(hands)*2),2*arange(len(fb)*len(hands)+1)))
-    c = ones(len(fb)*len(hands))
-    G = sparse.vstack([G,zeros((1,len(fb)*len(hands)*2))])
+    g = ravel(g)
+    G = spdiag(G.reshape((len(bets),len(hands),len(hands))))
+    """Since probabilities sum to one, we have sum_i Pij <= 1, = Qik <= 1.  The scale of P will have to vary, so add an extra
+    scalar element u to p, and enforce sum_i Pij <= u instead.  In matrix form, these constraints are
+        Bp <= 0, B(j,ij) = 1, B(j,-1) = -1
+        Cq <= c, C(ik,ik) = 1, cik = 1"""
+    B = sparse.hstack([sparse.csr_matrix((ones(len(bets)*len(hands)),arange(len(bets)*len(hands)).reshape(len(bets),-1).T.ravel(),len(bets)*arange(len(hands)+1))),-ones((len(hands),1))])
+    C = speye(len(bets)*len(hands))
+    c = ones(len(bets)*len(hands))
+    g = hstack([g,mu]) # Absorb mu into g
+    G = sparse.vstack([G,zeros((1,len(bets)*len(hands)))])
     """Before scaling, the problem we need to solve is
 
-        A = max_{p>=0, Bp=0, u=1} min_{q>=0, Cq=c} p^T G q
+        A = max_{p>=0, Bp<=0, u=1} min_{q>=0, Cq<=c} (mu + g'p + p' G q)
 
-    Allowing the scale variable u to grow until p^T G q >= 1, we get
+    Allowing the scale variable u to grow until g'p + p' G q >= 1, we get
 
-        1/A = min u s.t. p>=0, Bp=0 (inf_{q>=0, Cq=c} p^T G q)>=1
+        1/A = min u s.t. p>=0, Bp<=0 (inf_{q>=0, Cq<=c} p' G q)>=1-g'p
 
-    Following Tomas Tinoco De Rubira's email, strong duality gives
+    Following Tomas Tinoco De Rubira's email, we will dualize the universally quantified inequality into an existentially qualified inequality.  The primal problem is
 
-        (inf_{q>=0, Cq=c} p^T G q) = (sup_{G^T p + C^T z >= 0} -c^T z)
-        (1<=inf_{q>=0, Cq=c} p^T G q) iff exists z s.t. -c^T z >= 1, G^T p + C^T z >= 0
+        min   (G'p)'q
+        s.t.  q >= 0
+        s.t.  Cq <= c
+
+    which dualizes to
+    
+        max   -c'z
+        s.t.  C'z + G'p >= 0
+              z >= 0
+
+    Strong duality gives
+
+        (inf_{q>=0, Cq<=c} p' G q) = (sup_{z>=0, G' p + C' z >= 0} -c' z)
+        (1-g'p<=inf_{q>=0, Cq<=c} p^T G q) iff exists z>=0 s.t. g'p - c'z >= 1, G' p + C' z >= 0
 
     and our problem becomes
 
-        1/A = min u s.t. p>=0, Bp=0, -c'z>=1, G'p + C'z >= 0
-            = min u s.t. p>=0, Bp=0, c'z <= -1, -G'p + -C'z <= 0
+        1/A = min u s.t. p>=0, z>=0, Bp<=0, g'p - c'z >= 1, G'p + C'z >= 0
+            = min u s.t. p>=0, z>=0, Bp<=0, -g'p + c'z <= -1, -G'p - C'z <= 0
 
-    Now write x = [p,z], and construct H = [[-1,0],[-G',-C'],[0,c']], h = [0,0,-1]."""
-    pn,zn = len(fb)*len(hands)+1,len(fb)*len(hands)
-    qn = 2*zn
-    B = sparse.hstack([B,spzeros(len(hands),zn)])
-    b = zeros(len(hands))
-    H = spblocks([[-sparse.eye(pn,pn),spzeros(pn,zn)],[-G.T,-C.T],[spzeros(1,pn),c.reshape(1,-1)]])
-    h = hstack([zeros(pn+qn),-1])
-    e = hstack([zeros(pn-1),1,zeros(zn)])
+    Now write x = [p,z], and construct H = [-1,[-G.T,-C.T],[-g',c'],[B,0]], h = [0,0,-1,0]:"""
+    pn,qn = len(bets)*len(hands)+1,len(bets)*len(hands)
+    H = sparse.vstack([-speye(pn+qn),sparse.bmat([[-G.T,-C.T],[sparse.coo_matrix(-g.reshape(1,-1)),c.reshape(1,-1)],[B,None]])])
+    h = hstack([zeros(pn+2*qn),-1,zeros(len(hands))])
+    e = hstack([zeros(pn-1),1,zeros(qn)])
     """Our problem is now
 
-        1/A = min e'x s.t. Bx = b, Hx <= h
+        1/A = min e'x s.t. Hx <= h
 
-    which is exactly the form expected by cvxopt.  Time to think for a while:"""
-    solution = cvxopt_lp(e,H,h,B,b)
+    which is exactly the form expected by cvxopt.  Let's verify that the program is feasible:"""
+    x = hstack([zeros(pn-1),1/mu,zeros(qn)])
+    assert all(H*x-h<=1e-10)
+    """Time to think for a while:"""
+    solution = cvxopt_lp(e,H,h)
+    assert solution['status']=='optimal'
     """Alice's optimal strategy and equity are"""
     x = solution['x']
-    p = x[:len(fb)*len(hands)]
-    u = x[len(fb)*len(hands)]
-    P = p.reshape(len(fb),len(hands))/u
+    p,u,_ = asplit(x,pn-1,1,qn)
+    P = p.reshape(len(bets),len(hands))/u
     assert all(P>=-1e-4)
-    assert all(absolute(sum(P,axis=0)-1)<1e-4)
+    assert all(sum(P,axis=0)<1+1e-4)
     equity = 1/u-shift
     print "Alice's equity = %g"%equity
     """Now we work out Bob's optimal strategy given Alice's fixed strategy P.  Given Alice's bet i and Bob's hand k, the conditional probability of Alice having hand j is
         ca[i,j] = pp[j,k] P[i,j] / sum_j pp[j,k] P[i,j]"""
-    ca = pp.reshape(1,len(hands),len(hands))*P[1:].reshape(len(bets),len(hands),1)
+    ca = pp.reshape(1,len(hands),len(hands))*P.reshape(len(bets),len(hands),1)
     ca /= ca.sum(axis=1).reshape(len(bets),1,len(hands))
     """If Bob folds, his equity is -bb.  If Bob calls, his equity is
         Be[i,k] = sum_j ca[i,j,k] (bb+bets[i]) (w[k,j]-w[j,k])"""
     Be = sum(ca*(bb+bets).reshape(-1,1,1)*(w.T-w),axis=1)
-    equity2 = -sb*sum(pp*P[0].reshape(-1,1)) + sum(pp*P[1:].reshape(len(bets),len(hands),1)*if_((Be<-bb).reshape(len(bets),1,len(hands)),bb,(bb+bets.reshape(-1,1,1))*(w-w.T)))
+    equity2 = -sb*sum(pp*(1-P.sum(axis=0)).reshape(-1,1)) + sum(pp*P.reshape(len(bets),len(hands),1)*if_((Be<-bb).reshape(len(bets),1,len(hands)),bb,(bb+bets.reshape(-1,1,1))*(w-w.T)))
     Be = maximum(Be,-bb)
     print "Alice's equity if Bob switches = %g"%equity2
     print '  error = %g'%abs(equity-equity2)
     """What about Bob's Nash equilibrium strategy?  Can we extract it from the dual solution that we already have, rather than explicitly solving another dual LP?
-    The dual program to the program we gave to cvxopt is
+    The dual to the program we gave to cvxopt is
 
-        max  -h'r - b'y
-        s.t. H'r + B'y + e = 0
-             r >= 0
+        max  -h'y
+        s.t. H'y + e = 0
+             y >= 0
  
-    where r = [r0,r1,r2], y = [y0,y1].  Expanding H'r + B'y + e = 0 gives
+    where y = [y0,y1,y2,y3,y4].  Expanding H'y + e = 0 gives
 
-        -r0 - G r1 + B' y0 + e = 0
-        -C r1 + c r2 = 0
+        -y0 - G y2 - g y3 + B' y4 + e = 0
+        -y1 - C y2 + c y3 = 0
 
-    hinting that perhaps q = r1/r2.  We test this by constructing Alice's optimal strategy assuming Bob's strategy is q = r1/r2:"""
-    r = solution['z']
-    q = r[pn:-1]
-    Q = q.reshape(len(fb),len(hands),2)/r[-1]
+    or
+
+        -G y2 - g y3 + B' y4 + e >= 0
+        C y2 <= c y3
+
+    hinting that perhaps q = y2/y3.  We test this by constructing Alice's optimal strategy assuming Bob's strategy is q = y2/32:"""
+    y = solution['z']
+    _,q,qu,_ = asplit(y,pn+qn,qn,1,len(hands))
+    Q = q.reshape(len(bets),len(hands))/qu
     assert all(Q>=-1e-4)
-    assert all(absolute(sum(Q,axis=2)-1)<1e-4)
+    assert all(Q<=1+1e-4)
     cb = pp/sum(pp,axis=1).reshape(-1,1)
-    Ae = empty((len(fb),len(hands)))
+    Ae = empty((len(bets)+1,len(hands)))
     Ae[0] = -sb
-    Ae[1:] = sum(cb*if_(Q[1:,:,0].reshape(len(bets),1,len(hands)),bb,(bb+bets.reshape(-1,1,1))*(w-w.T)),axis=-1)
-    P2 = zeros((len(fb),len(hands)))
+    Ae[1:] = sum(cb*if_(Q.reshape(len(bets),1,len(hands)),(bb+bets.reshape(-1,1,1))*(w-w.T),bb),axis=-1)
+    P2 = zeros((len(bets)+1,len(hands)))
     P2[argmax(Ae,axis=0),arange(len(hands))] = 1
-    equity3 = -sb*sum(pp*P2[0].reshape(-1,1)) + sum(pp*P2[1:].reshape(len(bets),len(hands),1)*if_(Q[1:,:,0].reshape(len(bets),1,len(hands)),bb,(bb+bets.reshape(-1,1,1))*(w-w.T)))
+    equity3 = -sb*sum(ps*P2[0]) + sum(pp*P2[1:].reshape(len(bets),len(hands),1)*if_(Q.reshape(len(bets),1,len(hands)),(bb+bets.reshape(-1,1,1))*(w-w.T),bb))
     assert allclose(dot(Ae.max(axis=0),approx_hand_prob),equity3)
     print "Alice's equity if Alice switches = %g"%equity3
     print '  error = %g'%abs(equity-equity3)
@@ -622,10 +643,10 @@ elif options.variable or options.bets:
     print "\nAlice's strategy:"
     order = argsort(alice_equity.max(axis=0))[::-1]
     for j in order:
-        print '  %s : equity %g, strategy %s%s'%(hands[j],alice_equity[:,j].max(),times(alice[0,j],'f'),''.join(times(alice[i+1,j],'b%g'%b) for i,b in enumerate(bets)))
+        print '  %s : equity %g, strategy %s%s'%(hands[j],alice_equity[:,j].max(),times(1-alice[:,j].sum(),'f'),''.join(times(alice[i,j],'b%g'%b) for i,b in enumerate(bets)))
     print "\nBob's strategy:"
     for i,b in enumerate(bets):
-        print '  b%g : %s'%(b,''.join(times(bob[i+1,k,1],hands[k]) for k in order))
+        print '  b%g : %s'%(b,''.join(times(bob[i,k],hands[k]) for k in order))
 else:
     equity,alice,bob = poker_nash_equilibrium(bet)
     print "Alice's exact payoff = %s (%g)"%(equity,equity)

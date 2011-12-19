@@ -71,6 +71,9 @@ On a Mac, these can be obtained through [MacPorts](http://www.macports.org) via
 
     sudo port install py26-numpy py26-scipy py26-matplotlib py26-cvxopt
 
+cvxopt is GPL, so we isolate the LP solver interface inside the `cvxopt` script.
+Thus, the `cvxopt` script is GPL, but the rest of the code is BSD.
+
 *Update*: In order to take advantage of the exact probabilities provided by `exact`,
 `heads-up` uses a fixed precision rational number dtype that I wrote for numpy.
 Unfortunately, this uncovered several bugs in numpy.  Therefore, in order to use

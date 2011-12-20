@@ -41,7 +41,7 @@ def die(s):
     sys.exit(1)
 
 def ahash(*args):
-    return hash(''.join(a.tostring() for a in args))
+    return hash(''.join(asarray(a).tostring() for a in args))
 
 # Load exact win probabilities.  Important: win[a,b]+win[b,a]<1 due to ties, unlike the approximate version above
 def parse_exact_matchups():
@@ -483,21 +483,8 @@ def variable_bet_nash_equilibrium(sb,bb,bets):
     x = solution['x']
     p,u,_ = asplit(x,pn-1,1,qn)
     P = p.reshape(len(bets),len(hands))/u
-    assert all(P>=-1e-4)
-    assert all(sum(P,axis=0)<1+1e-4)
     equity = 1/u-shift
     print "Alice's equity = %g"%equity
-    """Now we work out Bob's optimal strategy given Alice's fixed strategy P.  Given Alice's bet i and Bob's hand k, the conditional probability of Alice having hand j is
-        ca[i,j] = pp[j,k] P[i,j] / sum_j pp[j,k] P[i,j]"""
-    ca = pp.reshape(1,len(hands),len(hands))*P.reshape(len(bets),len(hands),1)
-    ca /= ca.sum(axis=1).reshape(len(bets),1,len(hands))
-    """If Bob folds, his equity is -bb.  If Bob calls, his equity is
-        Be[i,k] = sum_j ca[i,j,k] (bb+bets[i]) (w[k,j]-w[j,k])"""
-    Be = sum(ca*(bb+bets).reshape(-1,1,1)*(w.T-w),axis=1)
-    equity2 = -sb*sum(pp*(1-P.sum(axis=0)).reshape(-1,1)) + sum(pp*P.reshape(len(bets),len(hands),1)*if_((Be<-bb).reshape(len(bets),1,len(hands)),bb,(bb+bets.reshape(-1,1,1))*(w-w.T)))
-    Be = maximum(Be,-bb)
-    print "Alice's equity if Bob switches = %g"%equity2
-    print '  error = %g'%abs(equity-equity2)
     """What about Bob's Nash equilibrium strategy?  Can we extract it from the dual solution that we already have, rather than explicitly solving another dual LP?
     The dual to the program we gave to cvxopt is
 
@@ -519,8 +506,29 @@ def variable_bet_nash_equilibrium(sb,bb,bets):
     y = solution['z']
     _,q,qu,_ = asplit(y,pn+qn,qn,1,len(hands))
     Q = q.reshape(len(bets),len(hands))/qu
+    return equity,P,Q
+
+def check_variable_bet_nash_equilibrium(sb,bb,bets,equity,P,Q):
+    assert all(P>=-1e-4)
+    assert all(sum(P,axis=0)<1+1e-4)
     assert all(Q>=-1e-4)
     assert all(Q<=1+1e-4)
+    """Recompute some variables from the above routine"""
+    pp = approx_hand_hand_prob
+    ps = pp.sum(axis=1)
+    w = approx_win + (1-approx_win-approx_win.T)/2
+    """Now we work out Bob's optimal strategy given Alice's fixed strategy P.  Given Alice's bet i and Bob's hand k, the conditional probability of Alice having hand j is
+        ca[i,j] = pp[j,k] P[i,j] / sum_j pp[j,k] P[i,j]"""
+    ca = pp.reshape(1,len(hands),len(hands))*P.reshape(len(bets),len(hands),1)
+    ca /= ca.sum(axis=1).reshape(len(bets),1,len(hands))
+    """If Bob folds, his equity is -bb.  If Bob calls, his equity is
+        Be[i,k] = sum_j ca[i,j,k] (bb+bets[i]) (w[k,j]-w[j,k])"""
+    Be = sum(ca*(bb+bets).reshape(-1,1,1)*(w.T-w),axis=1)
+    equity2 = -sb*sum(pp*(1-P.sum(axis=0)).reshape(-1,1)) + sum(pp*P.reshape(len(bets),len(hands),1)*if_((Be<-bb).reshape(len(bets),1,len(hands)),bb,(bb+bets.reshape(-1,1,1))*(w-w.T)))
+    Be = maximum(Be,-bb)
+    print "Alice's equity if Bob switches = %g"%equity2
+    print '  error = %g'%abs(equity-equity2)
+    """Now we compute Alice's optimal strategy given Bob's fixed strategy Q."""
     cb = pp/sum(pp,axis=1).reshape(-1,1)
     Ae = empty((len(bets)+1,len(hands)))
     Ae[0] = -sb
@@ -531,8 +539,9 @@ def variable_bet_nash_equilibrium(sb,bb,bets):
     assert allclose(dot(Ae.max(axis=0),approx_hand_prob),equity3)
     print "Alice's equity if Alice switches = %g"%equity3
     print '  error = %g'%abs(equity-equity3)
+    print 'Equity spread = %g'%(equity3-equity2)
     """All done!"""
-    return equity,P,Q,Ae,Be
+    return (equity2,equity3),Ae,Be
 
 bet = options.bet
 try:
@@ -626,12 +635,36 @@ elif options.variable or options.bets:
     sb = options.sb
     bb = options.bb
     if options.bets:
-        bets = fromstring(options.bets,sep=',')
+        bets = []
+        for b in options.bets.split(','):
+            number = r'(\d+(?:\.\d*)?|\.\d+)'
+            m = re.match('^%s$'%number,b)
+            if m:
+                bets.append(float(m.group(1)))
+            else:
+                m = re.match('^%s:%s:%s$'%(number,number,number),b)
+                if m:
+                    bets.extend(arange(float(m.group(1)),float(m.group(2)),float(m.group(3))))
+                else:
+                    print>>sys.stderr,"invalid bet sequence '%s'"%b
+                    sys.exit(0)
+        bets = array(bets)
     else:
         bets = bet/options.variable*arange(options.variable+1)
     print 'blinds = %g %g'%(sb,bb)
-    print 'bets = %s\n'%bets
-    equity,alice,bob,alice_equity,bob_equity = variable_bet_nash_equilibrium(sb,bb,bets)
+    print 'bets = %s'%bets
+    cache = 'variable-sb%g-bb%g-bets%d-%d.npz'%(sb,bb,len(bets),abs(ahash(sb,bb,bets)))
+    print 'cache file = %s\n'%cache
+    if os.path.exists(cache):
+        data = load(cache)
+        assert allclose(sb,data['sb'])
+        assert allclose(bb,data['bb'])
+        assert allclose(bets,data['bets'])
+        equity,alice,bob = data['equity'],data['alice'],data['bob']
+    else:
+        equity,alice,bob = variable_bet_nash_equilibrium(sb,bb,bets)
+        savez('variable-sb%g-bb%g-bets%d-%d.npz'%(sb,bb,len(bets),abs(ahash(sb,bb,bets))),sb=sb,bb=bb,bets=bets,equity=equity,alice=alice,bob=bob)
+    _,alice_equity,bob_equity = check_variable_bet_nash_equilibrium(sb,bb,bets,equity,alice,bob)
     def times(p,s,tol=1e-3):
         if p>=1-tol:
             return s+' '

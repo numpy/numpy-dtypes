@@ -25,6 +25,7 @@ parser.add_option('-d','--deterministic',action='store_true',help="switch to det
 parser.add_option('-n',type=int,default=10,help="number of samples to plot")
 parser.add_option('-v','--verbose',action='store_true',help="print or plot extra information")
 parser.add_option('-p','--profile',action='store_true',help="skip plotting for profiling purposes")
+parser.add_option('-t','--type',type=str,help="type of plot to show")
 options,args = parser.parse_args()
 if len(args): parser.error('zero arguments expected')
 
@@ -678,6 +679,19 @@ elif options.variable or options.bets:
     print "\nBob's strategy:"
     for i,b in enumerate(bets):
         print '  b%g : %s'%(b,''.join(times(bob[i,k],hands[k]) for k in order))
+    if options.type:
+        import pylab
+        if options.type=='p':
+            pb = sum(approx_hand_prob.reshape(1,-1)*alice,axis=1)
+            pb = hstack([1-pb.sum(),pb])
+            pylab.bar(hstack([-2,bets])-.5,pb)
+            pylab.xlim(-1,bets.max())
+            pylab.xlabel('action: raise amount or -1 for fold')
+            pylab.ylabel('probability')
+            pylab.title("Alice's probability of each action")
+            pylab.show()
+        else:
+            raise RuntimeError("unknown plot type '%s'"%options.type)
 else:
     equity,alice,bob = poker_nash_equilibrium(bet)
     print "Alice's exact payoff = %s (%g)"%(equity,equity)

@@ -6,3 +6,4 @@ build
 *.so
 *.dSYM
 *.npz
+.DS_Store

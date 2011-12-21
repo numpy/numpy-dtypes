@@ -1,6 +1,6 @@
 all: rational.so
 
-rational.so: rational.cpp
+rational.so: rational.c
 	python setup.py build
 	cp build/lib.*/rational.so .
 

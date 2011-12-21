@@ -109,7 +109,7 @@ def test_errors():
         except OverflowError:
             pass
     # Check for overflow in addition
-    r = R(1<<62)
+    r = R(1<<30)
     try:
         r+r
         assert False
@@ -118,7 +118,7 @@ def test_errors():
     # Check for overflow in multiplication
     p = R(1262081,1262083) # Twin primes from http://primes.utm.edu/lists/small/10ktwins.txt
     r = p
-    for _ in xrange(int(log(2.**63)/log(r.d))-1):
+    for _ in xrange(int(log(2.**31)/log(r.d))-1):
         r *= p
     try:
         r*p
@@ -135,7 +135,7 @@ def test_errors():
 
 def test_numpy_basic():
     d = dtype(rational)
-    assert d.itemsize==16
+    assert d.itemsize==8
     x = zeros(5,d)
     assert type(x[2]) is rational
     assert x[3]==0
@@ -173,16 +173,16 @@ def test_numpy_basic():
 def test_numpy_cast():
     r = arange(R(10,3),step=R(1,3),dtype=rational)
     # Check integer to rational conversion
-    for T in int8,uint8,int32,int64,uint64:
+    for T in int8,int32,int64:
         n = arange(10,dtype=T)
         assert all(n.astype(rational)==3*r)
         assert all(n+r==4*r)
     # Check rational to integer conversion
     assert all(r.astype(int)==r.astype(float).astype(int))
     # Check detection of overflow during casts
-    for x in array(-1),array([-1]):
+    for x in array(1<<40),array([1<<40]):
         try:
-            x.astype(uint64).astype(rational)
+            x.astype(int64).astype(rational)
             assert False
         except OverflowError:
             pass
@@ -245,7 +245,7 @@ def test_gcd_lcm():
 
 def test_numpy_errors():
     # Check that exceptions inside ufuncs are detected
-    r = array([1<<62]).astype(rational)
+    r = array([1<<30]).astype(rational)
     try:
         r+r
         assert False

@@ -7,3 +7,4 @@ build
 *.dSYM
 *.npz
 .DS_Store
+.*.swp

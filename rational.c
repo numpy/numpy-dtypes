@@ -1,4 +1,4 @@
-// Fixed size rational numbers exposed to Python
+/* Fixed size rational numbers exposed to Python */
 
 #define NPY_NO_DEPRECATED_API
 
@@ -9,14 +9,15 @@
 #include <numpy/arrayobject.h>
 #include <numpy/ufuncobject.h>
 
-// Relevant arithmetic exceptions
+/* Relevant arithmetic exceptions */
 
-// Uncomment the following line to work around a bug in numpy
-//#define ACQUIRE_GIL
+/* Uncomment the following line to work around a bug in numpy */
+/* #define ACQUIRE_GIL */
 
 static void set_overflow(void) {
 #ifdef ACQUIRE_GIL
-    PyGILState_STATE state = PyGILState_Ensure(); // Need to grab the GIL to dodge a bug in numpy
+    /* Need to grab the GIL to dodge a bug in numpy */
+    PyGILState_STATE state = PyGILState_Ensure();
 #endif
     if (!PyErr_Occurred())
         PyErr_SetString(PyExc_OverflowError,"overflow in rational arithmetic");
@@ -27,7 +28,8 @@ static void set_overflow(void) {
 
 static void set_zero_divide(void) {
 #ifdef ACQUIRE_GIL
-    PyGILState_STATE state = PyGILState_Ensure(); // Need to grab the GIL to dodge a bug in numpy
+    /* Need to grab the GIL to dodge a bug in numpy */
+    PyGILState_STATE state = PyGILState_Ensure();
 #endif
     if (!PyErr_Occurred())
         PyErr_SetString(PyExc_ZeroDivisionError,"zero divide in rational arithmetic");
@@ -36,15 +38,15 @@ static void set_zero_divide(void) {
 #endif
 }
 
-// Integer arithmetic utilities
+/* Integer arithmetic utilities */
 
-static inline int32_t safe_neg(int32_t x) {
+static NPY_INLINE int32_t safe_neg(int32_t x) {
     if (x==(int32_t)1<<31)
         set_overflow();
     return -x;
 }
 
-static inline int32_t safe_abs32(int32_t x) {
+static NPY_INLINE int32_t safe_abs32(int32_t x) {
     if (x>=0)
         return x;
     int32_t nx = -x;
@@ -53,7 +55,7 @@ static inline int32_t safe_abs32(int32_t x) {
     return nx;
 }
 
-static inline int64_t safe_abs64(int64_t x) {
+static NPY_INLINE int64_t safe_abs64(int64_t x) {
     if (x>=0)
         return x;
     int64_t nx = -x;
@@ -62,7 +64,7 @@ static inline int64_t safe_abs64(int64_t x) {
     return nx;
 }
 
-static inline int64_t gcd(int64_t x, int64_t y) {
+static NPY_INLINE int64_t gcd(int64_t x, int64_t y) {
     x = safe_abs64(x);
     y = safe_abs64(y);
     if (x < y) {
@@ -79,7 +81,7 @@ static inline int64_t gcd(int64_t x, int64_t y) {
     return x;
 }
 
-static inline int64_t lcm(int64_t x, int64_t y) {
+static NPY_INLINE int64_t lcm(int64_t x, int64_t y) {
     if (!x || !y)
         return 0;
     x /= gcd(x,y);
@@ -89,14 +91,16 @@ static inline int64_t lcm(int64_t x, int64_t y) {
     return safe_abs64(lcm);
 }
 
-// Fixed precision rational numbers
+/* Fixed precision rational numbers */
 
 typedef struct {
-    int32_t n; // numerator
-    int32_t dmm; // denominator minus one: numpy.zeros() uses memset(0) for non-object types, so need to ensure that rational(0) has all zero bytes
+    /* numerator */
+    int32_t n;
+    /* denominator minus one: numpy.zeros() uses memset(0) for non-object types, so need to ensure that rational(0) has all zero bytes */
+    int32_t dmm;
 } rational;
 
-static inline rational make_rational_int(int64_t n) {
+static NPY_INLINE rational make_rational_int(int64_t n) {
     rational r = {n,0};
     if (r.n != n)
         set_overflow();
@@ -126,11 +130,11 @@ static rational make_rational_slow(int64_t n_, int64_t d_) {
     return r;
 }
 
-static inline int32_t d(rational r) {
+static NPY_INLINE int32_t d(rational r) {
     return r.dmm+1;
 }
 
-// Assumes d_ > 0
+/* Assumes d_ > 0 */
 static rational make_rational_fast(int64_t n_, int64_t d_) {
     int64_t g = gcd(n_,d_);
     n_ /= g;
@@ -143,66 +147,66 @@ static rational make_rational_fast(int64_t n_, int64_t d_) {
     return r;
 }
 
-static inline rational rational_negative(rational r) {
+static NPY_INLINE rational rational_negative(rational r) {
     rational x;
     x.n = safe_neg(r.n);
     x.dmm = r.dmm;
     return x;
 }
 
-static inline rational rational_add(rational x, rational y) {
-    // Note that the numerator computation can never overflow int128_t, since each term is strictly under 2**128/4 (since d > 0).
+static NPY_INLINE rational rational_add(rational x, rational y) {
+    /* Note that the numerator computation can never overflow int128_t, since each term is strictly under 2**128/4 (since d > 0). */
     return make_rational_fast((int64_t)x.n*d(y)+(int64_t)d(x)*y.n,(int64_t)d(x)*d(y));
 }
 
-static inline rational rational_subtract(rational x, rational y) {
-    // We're safe from overflow as with +
+static NPY_INLINE rational rational_subtract(rational x, rational y) {
+    /* We're safe from overflow as with + */
     return make_rational_fast((int64_t)x.n*d(y)-(int64_t)d(x)*y.n,(int64_t)d(x)*d(y));
 }
 
-static inline rational rational_multiply(rational x, rational y) {
-    // We're safe from overflow as with +
+static NPY_INLINE rational rational_multiply(rational x, rational y) {
+    /* We're safe from overflow as with + */
     return make_rational_fast((int64_t)x.n*y.n,(int64_t)d(x)*d(y));
 }
 
-static inline rational rational_divide(rational x, rational y) {
+static NPY_INLINE rational rational_divide(rational x, rational y) {
     return make_rational_slow((int64_t)x.n*d(y),(int64_t)d(x)*y.n);
 }
 
-static inline int64_t rational_floor(rational x) {
-    // Always round down
+static NPY_INLINE int64_t rational_floor(rational x) {
+    /* Always round down */
     if (x.n>=0)
         return x.n/d(x);
-    // This can be done without casting up to 64 bits, but it requires working out all the sign cases
+    /* This can be done without casting up to 64 bits, but it requires working out all the sign cases */
     return -((-(int64_t)x.n+d(x)-1)/d(x));
 }
 
-static inline int64_t rational_ceil(rational x) {
+static NPY_INLINE int64_t rational_ceil(rational x) {
     return -rational_floor(rational_negative(x));
 }
 
-static inline rational rational_remainder(rational x, rational y) {
+static NPY_INLINE rational rational_remainder(rational x, rational y) {
     return rational_subtract(x,rational_multiply(y,make_rational_int(rational_floor(rational_divide(x,y)))));
 }
 
-static inline rational rational_abs(rational x) {
+static NPY_INLINE rational rational_abs(rational x) {
     rational y;
     y.n = safe_abs32(x.n);
     y.dmm = x.dmm;
     return y;
 }
 
-static inline int64_t rational_rint(rational x) {
-    // Round towards nearest integer, moving exact half integers towards zero
+static NPY_INLINE int64_t rational_rint(rational x) {
+    /* Round towards nearest integer, moving exact half integers towards zero */
     int32_t d_ = d(x);
     return (2*(int64_t)x.n+(x.n<0?-d_:d_))/(2*(int64_t)d_);
 }
 
-static inline int rational_sign(rational x) {
+static NPY_INLINE int rational_sign(rational x) {
     return x.n<0?-1:x.n==0?0:1;
 }
 
-static inline rational rational_inverse(rational x) {
+static NPY_INLINE rational rational_inverse(rational x) {
     rational y = {0};
     if (!x.n)
         set_zero_divide();
@@ -218,40 +222,40 @@ static inline rational rational_inverse(rational x) {
     return y;
 }
 
-static inline int rational_eq(rational x, rational y) {
-    // Since we enforce d > 0, and store fractions in reduced form, equality is easy.
+static NPY_INLINE int rational_eq(rational x, rational y) {
+    /* Since we enforce d > 0, and store fractions in reduced form, equality is easy. */
     return x.n==y.n && x.dmm==y.dmm;
 }
 
-static inline int rational_ne(rational x, rational y) {
+static NPY_INLINE int rational_ne(rational x, rational y) {
     return !rational_eq(x,y);
 }
 
-static inline int rational_lt(rational x, rational y) {
+static NPY_INLINE int rational_lt(rational x, rational y) {
     return (int64_t)x.n*d(y) < (int64_t)y.n*d(x);
 }
 
-static inline int rational_gt(rational x, rational y) {
+static NPY_INLINE int rational_gt(rational x, rational y) {
     return rational_lt(y,x);
 }
 
-static inline int rational_le(rational x, rational y) {
+static NPY_INLINE int rational_le(rational x, rational y) {
     return !rational_lt(y,x);
 }
 
-static inline int rational_ge(rational x, rational y) {
+static NPY_INLINE int rational_ge(rational x, rational y) {
     return !rational_lt(x,y);
 }
 
-static inline int32_t rational_int(rational x) {
+static NPY_INLINE int32_t rational_int(rational x) {
     return x.n/d(x);
 }
 
-static inline double rational_double(rational x) {
+static NPY_INLINE double rational_double(rational x) {
     return (double)x.n/d(x);
 }
 
-static inline int rational_nonzero(rational x) {
+static NPY_INLINE int rational_nonzero(rational x) {
     return x.n!=0;
 }
 
@@ -274,7 +278,7 @@ static int scan_rational(const char** s, rational* x) {
     return 1;
 }
 
-// Expose rational to Python as a numpy scalar
+/* Expose rational to Python as a numpy scalar */
 
 typedef struct {
     PyObject_HEAD;
@@ -283,7 +287,7 @@ typedef struct {
 
 static PyTypeObject PyRational_Type;
 
-static inline int PyRational_Check(PyObject* object) {
+static NPY_INLINE int PyRational_Check(PyObject* object) {
     return PyObject_IsInstance(object,(PyObject*)&PyRational_Type);
 }
 
@@ -333,7 +337,7 @@ static PyObject* pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kw
                 PyErr_Format(PyExc_TypeError,"expected integer %s, got %s",(i?"denominator":"numerator"),x[i]->ob_type->tp_name);
             return 0;
         }
-        // Check that we had an exact integer
+        /* Check that we had an exact integer */
         PyObject* y = PyInt_FromLong(n[i]);
         if (!y)
             return 0;
@@ -352,7 +356,7 @@ static PyObject* pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kw
     return PyRational_FromRational(r);
 }
 
-// Returns Py_NotImplemented on most conversion failures, or raises an overflow error for too long ints
+/* Returns Py_NotImplemented on most conversion failures, or raises an overflow error for too long ints */
 #define AS_RATIONAL(dst,object) \
     rational dst = {0}; \
     if (PyRational_Check(object)) \
@@ -416,8 +420,10 @@ static PyObject* pyrational_str(PyObject* self) {
 
 static long pyrational_hash(PyObject* self) {
     rational x = ((PyRational*)self)->r;
-    long h = 131071*x.n+524287*x.dmm; // Use a fairly weak hash as Python expects
-    return h==-1?2:h; // Never return the special error value -1
+    /* Use a fairly weak hash as Python expects */
+    long h = 131071*x.n+524287*x.dmm;
+    /* Never return the special error value -1 */
+    return h==-1?2:h;
 }
 
 #define RATIONAL_BINOP_2(name,exp) \
@@ -461,47 +467,47 @@ static int pyrational_nonzero(PyObject* self) {
 }
 
 static PyNumberMethods pyrational_as_number = {
-    pyrational_add,          // nb_add
-    pyrational_subtract,     // nb_subtract
-    pyrational_multiply,     // nb_multiply
-    pyrational_divide,       // nb_divide
-    pyrational_remainder,    // nb_remainder
-    0,                     // nb_divmod
-    0,                     // nb_power
-    pyrational_negative,     // nb_negative
-    pyrational_positive,     // nb_positive
-    pyrational_absolute,     // nb_absolute
-    pyrational_nonzero,      // nb_nonzero
-    0,                     // nb_invert
-    0,                     // nb_lshift
-    0,                     // nb_rshift
-    0,                     // nb_and
-    0,                     // nb_xor
-    0,                     // nb_or
-    0,                     // nb_coerce
-    pyrational_int,          // nb_int
-    pyrational_int,          // nb_long
-    pyrational_float,        // nb_float
-    0,                     // nb_oct
-    0,                     // nb_hex
+    pyrational_add,          /* nb_add */
+    pyrational_subtract,     /* nb_subtract */
+    pyrational_multiply,     /* nb_multiply */
+    pyrational_divide,       /* nb_divide */
+    pyrational_remainder,    /* nb_remainder */
+    0,                       /* nb_divmod */
+    0,                       /* nb_power */
+    pyrational_negative,     /* nb_negative */
+    pyrational_positive,     /* nb_positive */
+    pyrational_absolute,     /* nb_absolute */
+    pyrational_nonzero,      /* nb_nonzero */
+    0,                       /* nb_invert */
+    0,                       /* nb_lshift */
+    0,                       /* nb_rshift */
+    0,                       /* nb_and */
+    0,                       /* nb_xor */
+    0,                       /* nb_or */
+    0,                       /* nb_coerce */
+    pyrational_int,          /* nb_int */
+    pyrational_int,          /* nb_long */
+    pyrational_float,        /* nb_float */
+    0,                       /* nb_oct */
+    0,                       /* nb_hex */
 
-    0,                     // nb_inplace_add
-    0,                     // nb_inplace_subtract
-    0,                     // nb_inplace_multiply
-    0,                     // nb_inplace_divide
-    0,                     // nb_inplace_remainder
-    0,                     // nb_inplace_power
-    0,                     // nb_inplace_lshift
-    0,                     // nb_inplace_rshift
-    0,                     // nb_inplace_and
-    0,                     // nb_inplace_xor
-    0,                     // nb_inplace_or
+    0,                       /* nb_inplace_add */
+    0,                       /* nb_inplace_subtract */
+    0,                       /* nb_inplace_multiply */
+    0,                       /* nb_inplace_divide */
+    0,                       /* nb_inplace_remainder */
+    0,                       /* nb_inplace_power */
+    0,                       /* nb_inplace_lshift */
+    0,                       /* nb_inplace_rshift */
+    0,                       /* nb_inplace_and */
+    0,                       /* nb_inplace_xor */
+    0,                       /* nb_inplace_or */
 
-    pyrational_floor_divide, // nb_floor_divide
-    pyrational_divide,       // nb_true_divide
-    0,                     // nb_inplace_floor_divide
-    0,                     // nb_inplace_true_divide
-    0,                     // nb_index
+    pyrational_floor_divide, /* nb_floor_divide */
+    pyrational_divide,       /* nb_true_divide */
+    0,                       /* nb_inplace_floor_divide */
+    0,                       /* nb_inplace_true_divide */
+    0,                       /* nb_index */
 };
 
 static PyObject* pyrational_n(PyObject* self, void* closure) {
@@ -515,53 +521,53 @@ static PyObject* pyrational_d(PyObject* self, void* closure) {
 static PyGetSetDef pyrational_getset[] = {
     {(char*)"n",pyrational_n,0,(char*)"numerator",0},
     {(char*)"d",pyrational_d,0,(char*)"denominator",0},
-    {0} // sentinel
+    {0} /* sentinel */
 };
 
 static PyTypeObject PyRational_Type = {
     PyObject_HEAD_INIT(&PyType_Type)
-    0,                                        // ob_size
-    "rational",                               // tp_name
-    sizeof(PyRational),                       // tp_basicsize
-    0,                                        // tp_itemsize
-    0,                                        // tp_dealloc
-    0,                                        // tp_print
-    0,                                        // tp_getattr
-    0,                                        // tp_setattr
-    0,                                        // tp_compare
-    pyrational_repr,                          // tp_repr
-    &pyrational_as_number,                    // tp_as_number
-    0,                                        // tp_as_sequence
-    0,                                        // tp_as_mapping
-    pyrational_hash,                          // tp_hash
-    0,                                        // tp_call
-    pyrational_str,                           // tp_str
-    0,                                        // tp_getattro
-    0,                                        // tp_setattro
-    0,                                        // tp_as_buffer
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_CHECKTYPES, // tp_flags
-    "Fixed precision rational numbers",       // tp_doc
-    0,                                        // tp_traverse
-    0,                                        // tp_clear
-    pyrational_richcompare,                   // tp_richcompare
-    0,                                        // tp_weaklistoffset
-    0,                                        // tp_iter
-    0,                                        // tp_iternext
-    0,                                        // tp_methods
-    0,                                        // tp_members
-    pyrational_getset,                        // tp_getset
-    0,                                        // tp_base
-    0,                                        // tp_dict
-    0,                                        // tp_descr_get
-    0,                                        // tp_descr_set
-    0,                                        // tp_dictoffset
-    0,                                        // tp_init
-    0,                                        // tp_alloc
-    pyrational_new,                           // tp_new
-    0,                                        // tp_free
+    0,                                        /* ob_size */
+    "rational",                               /* tp_name */
+    sizeof(PyRational),                       /* tp_basicsize */
+    0,                                        /* tp_itemsize */
+    0,                                        /* tp_dealloc */
+    0,                                        /* tp_print */
+    0,                                        /* tp_getattr */
+    0,                                        /* tp_setattr */
+    0,                                        /* tp_compare */
+    pyrational_repr,                          /* tp_repr */
+    &pyrational_as_number,                    /* tp_as_number */
+    0,                                        /* tp_as_sequence */
+    0,                                        /* tp_as_mapping */
+    pyrational_hash,                          /* tp_hash */
+    0,                                        /* tp_call */
+    pyrational_str,                           /* tp_str */
+    0,                                        /* tp_getattro */
+    0,                                        /* tp_setattro */
+    0,                                        /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_CHECKTYPES, /* tp_flags */
+    "Fixed precision rational numbers",       /* tp_doc */
+    0,                                        /* tp_traverse */
+    0,                                        /* tp_clear */
+    pyrational_richcompare,                   /* tp_richcompare */
+    0,                                        /* tp_weaklistoffset */
+    0,                                        /* tp_iter */
+    0,                                        /* tp_iternext */
+    0,                                        /* tp_methods */
+    0,                                        /* tp_members */
+    pyrational_getset,                        /* tp_getset */
+    0,                                        /* tp_base */
+    0,                                        /* tp_dict */
+    0,                                        /* tp_descr_get */
+    0,                                        /* tp_descr_set */
+    0,                                        /* tp_dictoffset */
+    0,                                        /* tp_init */
+    0,                                        /* tp_alloc */
+    pyrational_new,                           /* tp_new */
+    0,                                        /* tp_free */
 };
 
-// Numpy support
+/* Numpy support */
 
 static PyObject* npyrational_getitem(void* data, void* arr) {
     rational r;
@@ -594,7 +600,7 @@ static int npyrational_setitem(PyObject* item, void* data, void* arr) {
     return 0;
 }
 
-static inline void byteswap(int32_t* x) {
+static NPY_INLINE void byteswap(int32_t* x) {
     char* p = (char*)x;
     size_t i;
     for (i = 0; i < sizeof(*x)/2; i++) {
@@ -705,20 +711,20 @@ typedef struct { char c; rational r; } align_test;
 
 PyArray_Descr npyrational_descr = {
     PyObject_HEAD_INIT(0)
-    &PyRational_Type,       // typeobj
-    'V',                    // kind
-    'r',                    // type
-    '=',                    // byteorder
-    // For now, we need NPY_NEEDS_PYAPI in order to make numpy detect our exceptions.  This isn't technically necessary,
-    // since we're careful about thread safety, and hopefully future versions of numpy will recognize that.
-    NPY_NEEDS_PYAPI | NPY_USE_GETITEM | NPY_USE_SETITEM, // hasobject
-    0,                      // type_num
-    sizeof(rational),       // elsize
-    offsetof(align_test,r), // alignment
-    0,                      // subarray
-    0,                      // fields
-    0,                      // names
-    &npyrational_arrfuncs,     // f
+    &PyRational_Type,       /* typeobj */
+    'V',                    /* kind */
+    'r',                    /* type */
+    '=',                    /* byteorder */
+    /* For now, we need NPY_NEEDS_PYAPI in order to make numpy detect our exceptions.  This isn't technically necessary,
+       since we're careful about thread safety, and hopefully future versions of numpy will recognize that. */
+    NPY_NEEDS_PYAPI | NPY_USE_GETITEM | NPY_USE_SETITEM, /* hasobject */
+    0,                      /* type_num */
+    sizeof(rational),       /* elsize */
+    offsetof(align_test,r), /* alignment */
+    0,                      /* subarray */
+    0,                      /* fields */
+    0,                      /* names */
+    &npyrational_arrfuncs,  /* f */
 };
 
 #define DEFINE_CAST(From,To,statement) \
@@ -800,12 +806,12 @@ UNARY_UFUNC(numerator,int64_t,x.n)
 UNARY_UFUNC(denominator,int64_t,d(x))
 
 PyMethodDef module_methods[] = {
-    {0} // sentinel
+    {0} /* sentinel */
 };
 
 PyMODINIT_FUNC
 initrational(void) {
-    // Initialize numpy
+    /* Initialize numpy */
     import_array();
     if (PyErr_Occurred()) return;
     import_umath();
@@ -816,14 +822,14 @@ initrational(void) {
     Py_DECREF(numpy_str);
     if (!numpy) return;
 
-    // Can't set this until we import numpy
+    /* Can't set this until we import numpy */
     PyRational_Type.tp_base = &PyGenericArrType_Type;
 
-    // Initialize rational type object
+    /* Initialize rational type object */
     if (PyType_Ready(&PyRational_Type) < 0)
         return;
 
-    // Initialize rational descriptor
+    /* Initialize rational descriptor */
     PyArray_InitArrFuncs(&npyrational_arrfuncs);
     npyrational_arrfuncs.getitem = npyrational_getitem;
     npyrational_arrfuncs.setitem = npyrational_setitem;
@@ -836,15 +842,15 @@ initrational(void) {
     npyrational_arrfuncs.nonzero = npyrational_nonzero;
     npyrational_arrfuncs.fill = npyrational_fill;
     npyrational_arrfuncs.fillwithscalar = npyrational_fillwithscalar;
-    // Left undefined: scanfunc, fromstr, sort, argsort
+    /* Left undefined: scanfunc, fromstr, sort, argsort */
     npyrational_descr.ob_type = &PyArrayDescr_Type;
     int npy_rational = PyArray_RegisterDataType(&npyrational_descr);
     if (npy_rational<0) return;
 
-    // Support dtype(rational) syntax
+    /* Support dtype(rational) syntax */
     if (PyDict_SetItemString(PyRational_Type.tp_dict,"dtype",(PyObject*)&npyrational_descr)<0) return;
 
-    // Register casts to and from rational
+    /* Register casts to and from rational */
     #define REGISTER_CAST(From,To,from_descr,to_typenum,safe) \
         PyArray_Descr* from_descr_##From##_##To = (from_descr); \
         if (PyArray_RegisterCastFunc(from_descr_##From##_##To,(to_typenum),npycast_##From##_##To)<0) return; \
@@ -861,7 +867,7 @@ initrational(void) {
     REGISTER_CAST(npy_bool,rational,PyArray_DescrFromType(NPY_BOOL),npy_rational,1)
     REGISTER_CAST(rational,npy_bool,&npyrational_descr,NPY_BOOL,0)
 
-    // Register ufuncs
+    /* Register ufuncs */
     #define REGISTER_UFUNC(name,...) ({ \
         PyUFuncObject* ufunc = (PyUFuncObject*)PyObject_GetAttrString(numpy,#name); \
         if (!ufunc) return; \
@@ -875,7 +881,7 @@ initrational(void) {
     #define REGISTER_UFUNC_BINARY_RATIONAL(name) REGISTER_UFUNC(name,{npy_rational,npy_rational,npy_rational})
     #define REGISTER_UFUNC_BINARY_COMPARE(name) REGISTER_UFUNC(name,{npy_rational,npy_rational,NPY_BOOL})
     #define REGISTER_UFUNC_UNARY(name) REGISTER_UFUNC(name,{npy_rational,npy_rational})
-    // Binary
+    /* Binary */
     REGISTER_UFUNC_BINARY_RATIONAL(add)
     REGISTER_UFUNC_BINARY_RATIONAL(subtract)
     REGISTER_UFUNC_BINARY_RATIONAL(multiply)
@@ -885,14 +891,14 @@ initrational(void) {
     REGISTER_UFUNC_BINARY_RATIONAL(floor_divide)
     REGISTER_UFUNC_BINARY_RATIONAL(minimum)
     REGISTER_UFUNC_BINARY_RATIONAL(maximum)
-    // Comparisons
+    /* Comparisons */
     REGISTER_UFUNC_BINARY_COMPARE(equal)
     REGISTER_UFUNC_BINARY_COMPARE(not_equal)
     REGISTER_UFUNC_BINARY_COMPARE(less)
     REGISTER_UFUNC_BINARY_COMPARE(greater)
     REGISTER_UFUNC_BINARY_COMPARE(less_equal)
     REGISTER_UFUNC_BINARY_COMPARE(greater_equal)
-    // Unary
+    /* Unary */
     REGISTER_UFUNC_UNARY(negative)
     REGISTER_UFUNC_UNARY(absolute)
     REGISTER_UFUNC_UNARY(floor)
@@ -903,16 +909,16 @@ initrational(void) {
     REGISTER_UFUNC_UNARY(reciprocal)
     REGISTER_UFUNC_UNARY(sign)
 
-    // Create module
+    /* Create module */
     PyObject* m = Py_InitModule3("rational", module_methods,
         "Fixed precision rational numbers, including numpy support");
     if (!m) return;
 
-    // Add rational type
+    /* Add rational type */
     Py_INCREF(&PyRational_Type);
     PyModule_AddObject(m,"rational",(PyObject*)&PyRational_Type);
 
-    // Create numerator and denominator ufuncs
+    /* Create numerator and denominator ufuncs */
     #define NEW_UNARY_UFUNC(name,type,doc) { \
         PyObject* ufunc = PyUFunc_FromFuncAndData(0,0,0,0,1,1,PyUFunc_None,(char*)#name,(char*)doc,0); \
         if (!ufunc) return; \
@@ -922,7 +928,7 @@ initrational(void) {
     NEW_UNARY_UFUNC(numerator,NPY_INT64,"rational number numerator");
     NEW_UNARY_UFUNC(denominator,NPY_INT64,"rational number denominator");
 
-    // Create gcd and lcm ufuncs
+    /* Create gcd and lcm ufuncs */
     #define GCD_LCM_UFUNC(name,type,doc) ({ \
         static const PyUFuncGenericFunction func[1] = {name##_ufunc}; \
         static const char types[3] = {type,type,type}; \

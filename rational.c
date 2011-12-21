@@ -11,18 +11,29 @@
 
 // Relevant arithmetic exceptions
 
+// Uncomment the following line to work around a bug in numpy
+//#define ACQUIRE_GIL
+
 static void set_overflow(void) {
+#ifdef ACQUIRE_GIL
     PyGILState_STATE state = PyGILState_Ensure(); // Need to grab the GIL to dodge a bug in numpy
+#endif
     if (!PyErr_Occurred())
         PyErr_SetString(PyExc_OverflowError,"overflow in rational arithmetic");
+#ifdef ACQUIRE_GIL
     PyGILState_Release(state);
+#endif
 }
 
 static void set_zero_divide(void) {
+#ifdef ACQUIRE_GIL
     PyGILState_STATE state = PyGILState_Ensure(); // Need to grab the GIL to dodge a bug in numpy
+#endif
     if (!PyErr_Occurred())
         PyErr_SetString(PyExc_ZeroDivisionError,"zero divide in rational arithmetic");
+#ifdef ACQUIRE_GIL
     PyGILState_Release(state);
+#endif
 }
 
 // Integer arithmetic utilities

@@ -1,0 +1,10 @@
+exact
+*.E
+*.clbuilder
+*.pyc
+build
+*.so
+*.dSYM
+*.npz
+.DS_Store
+.*.swp

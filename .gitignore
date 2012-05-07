@@ -1,27 +1,80 @@
-*.py[co]
+# Editor temporary/working/backup files #
+#########################################
+.#*
+[#]*#
+*~
+*$
+*.bak
+*.diff
+*.org
+.project
+*.rej
+.settings/
+.*.sw[nop]
+.sw[nop]
+*.tmp
 
-# Packages
-*.egg
-*.egg-info
-dist
+# Compiled source #
+###################
+*.a
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.py[ocd]
+*.so
+
+# Packages #
+############
+# it's better to unpack these files and commit the raw source
+# git has its own built in compression methods
+*.7z
+*.bz2
+*.bzip2
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tbz2
+*.tgz
+*.zip
+
+# Python files #
+################
+# setup.py working directory
 build
-eggs
-parts
-bin
-var
-sdist
-develop-eggs
-.installed.cfg
+# sphinx build directory
+_build
+# setup.py dist directory
+dist
+doc/build
+doc/cdoc/build
+# Egg metadata
+*.egg-info
+# The shelf plugin uses this dir
+./.shelf
 
-# Installer logs
-pip-log.txt
+# Logs and databases #
+######################
+*.log
+*.sql
+*.sqlite
 
-# Unit test / coverage reports
-.coverage
-.tox
+# Patches #
+###########
+*.patch
+*.diff
 
-#Translations
-*.mo
+# OS generated files #
+######################
+.gdb_history
+.DS_Store*
+ehthumbs.db
+Icon?
+Thumbs.db
 
-#Mr Developer
-.mr.developer.cfg
+# Things specific to this project #
+###################################

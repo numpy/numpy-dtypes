@@ -117,7 +117,8 @@ def test_errors():
     except OverflowError:
         pass
     # Check for overflow in multiplication
-    p = R(1262081,1262083) # Twin primes from http://primes.utm.edu/lists/small/10ktwins.txt
+    # Twin primes from http://primes.utm.edu/lists/small/10ktwins.txt
+    p = R(1262081,1262083)
     r = p
     for _ in xrange(int(log(2.**31)/log(r.d))-1):
         r *= p

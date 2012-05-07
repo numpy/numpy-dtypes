@@ -21,7 +21,8 @@ set_overflow(void) {
     PyGILState_STATE state = PyGILState_Ensure();
 #endif
     if (!PyErr_Occurred()) {
-        PyErr_SetString(PyExc_OverflowError,"overflow in rational arithmetic");
+        PyErr_SetString(PyExc_OverflowError,
+                "overflow in rational arithmetic");
     }
 #ifdef ACQUIRE_GIL
     PyGILState_Release(state);
@@ -35,7 +36,8 @@ set_zero_divide(void) {
     PyGILState_STATE state = PyGILState_Ensure();
 #endif
     if (!PyErr_Occurred()) {
-        PyErr_SetString(PyExc_ZeroDivisionError,"zero divide in rational arithmetic");
+        PyErr_SetString(PyExc_ZeroDivisionError,
+                "zero divide in rational arithmetic");
     }
 #ifdef ACQUIRE_GIL
     PyGILState_Release(state);
@@ -112,7 +114,10 @@ lcm(int64_t x, int64_t y) {
 typedef struct {
     /* numerator */
     int32_t n;
-    /* denominator minus one: numpy.zeros() uses memset(0) for non-object types, so need to ensure that rational(0) has all zero bytes */
+    /*
+     * denominator minus one: numpy.zeros() uses memset(0) for non-object
+     * types, so need to ensure that rational(0) has all zero bytes
+     */
     int32_t dmm;
 } rational;
 
@@ -181,7 +186,10 @@ rational_negative(rational r) {
 
 static NPY_INLINE rational
 rational_add(rational x, rational y) {
-    /* Note that the numerator computation can never overflow int128_t, since each term is strictly under 2**128/4 (since d > 0). */
+    /*
+     * Note that the numerator computation can never overflow int128_t,
+     * since each term is strictly under 2**128/4 (since d > 0).
+     */
     return make_rational_fast((int64_t)x.n*d(y)+(int64_t)d(x)*y.n,(int64_t)d(x)*d(y));
 }
 
@@ -208,7 +216,10 @@ rational_floor(rational x) {
     if (x.n>=0) {
         return x.n/d(x);
     }
-    /* This can be done without casting up to 64 bits, but it requires working out all the sign cases */
+    /*
+     * This can be done without casting up to 64 bits, but it requires
+     * working out all the sign cases
+     */
     return -((-(int64_t)x.n+d(x)-1)/d(x));
 }
 
@@ -219,7 +230,8 @@ rational_ceil(rational x) {
 
 static NPY_INLINE rational
 rational_remainder(rational x, rational y) {
-    return rational_subtract(x,rational_multiply(y,make_rational_int(rational_floor(rational_divide(x,y)))));
+    return rational_subtract(x, rational_multiply(y,make_rational_int(
+                    rational_floor(rational_divide(x,y)))));
 }
 
 static NPY_INLINE rational
@@ -232,7 +244,10 @@ rational_abs(rational x) {
 
 static NPY_INLINE int64_t
 rational_rint(rational x) {
-    /* Round towards nearest integer, moving exact half integers towards zero */
+    /*
+     * Round towards nearest integer, moving exact half integers towards
+     * zero
+     */
     int32_t d_ = d(x);
     return (2*(int64_t)x.n+(x.n<0?-d_:d_))/(2*(int64_t)d_);
 }
@@ -262,7 +277,10 @@ rational_inverse(rational x) {
 
 static NPY_INLINE int
 rational_eq(rational x, rational y) {
-    /* Since we enforce d > 0, and store fractions in reduced form, equality is easy. */
+    /*
+     * Since we enforce d > 0, and store fractions in reduced form,
+     * equality is easy.
+     */
     return x.n==y.n && x.dmm==y.dmm;
 }
 
@@ -354,12 +372,14 @@ PyRational_FromRational(rational x) {
 static PyObject*
 pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
     if (kwds && PyDict_Size(kwds)) {
-        PyErr_SetString(PyExc_TypeError,"constructor takes no keyword arguments");
+        PyErr_SetString(PyExc_TypeError,
+                "constructor takes no keyword arguments");
         return 0;
     }
     Py_ssize_t size = PyTuple_GET_SIZE(args);
     if (size>2) {
-        PyErr_SetString(PyExc_TypeError,"expected rational or numerator and optional denominator");
+        PyErr_SetString(PyExc_TypeError,
+                "expected rational or numerator and optional denominator");
         return 0;
     }
     PyObject* x[2] = {PyTuple_GET_ITEM(args,0),PyTuple_GET_ITEM(args,1)};
@@ -381,7 +401,8 @@ pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
                 return PyRational_FromRational(x);
             }
             bad:
-            PyErr_Format(PyExc_ValueError,"invalid rational literal '%s'",s);
+            PyErr_Format(PyExc_ValueError,
+                    "invalid rational literal '%s'",s);
             return 0;
         }
     }
@@ -391,7 +412,10 @@ pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
         n[i] = PyInt_AsLong(x[i]);
         if (n[i]==-1 && PyErr_Occurred()) {
             if (PyErr_ExceptionMatches(PyExc_TypeError)) {
-                PyErr_Format(PyExc_TypeError,"expected integer %s, got %s",(i?"denominator":"numerator"),x[i]->ob_type->tp_name);
+                PyErr_Format(PyExc_TypeError,
+                        "expected integer %s, got %s",
+                        (i ? "denominator" : "numerator"),
+                        x[i]->ob_type->tp_name);
             }
             return 0;
         }
@@ -406,7 +430,10 @@ pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
             return 0;
         }
         if (!eq) {
-            PyErr_Format(PyExc_TypeError,"expected integer %s, got %s",(i?"denominator":"numerator"),x[i]->ob_type->tp_name);
+            PyErr_Format(PyExc_TypeError,
+                    "expected integer %s, got %s",
+                    (i ? "denominator" : "numerator"),
+                    x[i]->ob_type->tp_name);
             return 0;
         }
     }
@@ -417,7 +444,10 @@ pyrational_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
     return PyRational_FromRational(r);
 }
 
-/* Returns Py_NotImplemented on most conversion failures, or raises an overflow error for too long ints */
+/*
+ * Returns Py_NotImplemented on most conversion failures, or raises an
+ * overflow error for too long ints
+ */
 #define AS_RATIONAL(dst,object) \
     rational dst = {0}; \
     if (PyRational_Check(object)) { \
@@ -471,10 +501,12 @@ static PyObject*
 pyrational_repr(PyObject* self) {
     rational x = ((PyRational*)self)->r;
     if (d(x)!=1) {
-        return PyString_FromFormat("rational(%ld,%ld)",(long)x.n,(long)d(x));
+        return PyString_FromFormat(
+                "rational(%ld,%ld)",(long)x.n,(long)d(x));
     }
     else {
-        return PyString_FromFormat("rational(%ld)",(long)x.n);
+        return PyString_FromFormat(
+                "rational(%ld)",(long)x.n);
     }
 }
 
@@ -482,10 +514,12 @@ static PyObject*
 pyrational_str(PyObject* self) {
     rational x = ((PyRational*)self)->r;
     if (d(x)!=1) {
-        return PyString_FromFormat("%ld/%ld",(long)x.n,(long)d(x));
+        return PyString_FromFormat(
+                "%ld/%ld",(long)x.n,(long)d(x));
     }
     else {
-        return PyString_FromFormat("%ld",(long)x.n);
+        return PyString_FromFormat(
+                "%ld",(long)x.n);
     }
 }
 
@@ -677,7 +711,8 @@ npyrational_setitem(PyObject* item, void* data, void* arr) {
             return -1;
         }
         if (!eq) {
-            PyErr_Format(PyExc_TypeError,"expected rational, got %s",item->ob_type->tp_name);
+            PyErr_Format(PyExc_TypeError,
+                    "expected rational, got %s", item->ob_type->tp_name);
             return -1;
         }
         r = make_rational_int(n);
@@ -699,7 +734,8 @@ byteswap(int32_t* x) {
 }
 
 static void
-npyrational_copyswapn(void* dst_, npy_intp dstride, void* src_, npy_intp sstride, npy_intp n, int swap, void* arr) {
+npyrational_copyswapn(void* dst_, npy_intp dstride, void* src_,
+        npy_intp sstride, npy_intp n, int swap, void* arr) {
     char *dst = (char*)dst_, *src = (char*)src_;
     if (!src) {
         return;
@@ -713,12 +749,12 @@ npyrational_copyswapn(void* dst_, npy_intp dstride, void* src_, npy_intp sstride
             byteswap(&r->dmm);
         }
     }
-    else if (dstride==sizeof(rational) && sstride==sizeof(rational)) {
-        memcpy(dst,src,n*sizeof(rational));
+    else if (dstride == sizeof(rational) && sstride == sizeof(rational)) {
+        memcpy(dst, src, n*sizeof(rational));
     }
     else {
         for (i = 0; i < n; i++) {
-            memcpy(dst+dstride*i,src+sstride*i,sizeof(rational));
+            memcpy(dst + dstride*i, src + sstride*i, sizeof(rational));
         }
     }
 }
@@ -766,7 +802,8 @@ FIND_EXTREME(argmin,lt)
 FIND_EXTREME(argmax,gt)
 
 static void
-npyrational_dot(void* ip0_, npy_intp is0, void* ip1_, npy_intp is1, void* op, npy_intp n, void* arr) {
+npyrational_dot(void* ip0_, npy_intp is0, void* ip1_, npy_intp is1,
+        void* op, npy_intp n, void* arr) {
     rational r = {0};
     const char *ip0 = (char*)ip0_, *ip1 = (char*)ip1_;
     npy_intp i;
@@ -799,7 +836,8 @@ npyrational_fill(void* data_, npy_intp length, void* arr) {
 }
 
 static int
-npyrational_fillwithscalar(void* buffer_, npy_intp length, void* value, void* arr) {
+npyrational_fillwithscalar(void* buffer_, npy_intp length,
+        void* value, void* arr) {
     rational r = *(rational*)value;
     rational* buffer = (rational*)buffer_;
     npy_intp i;
@@ -819,8 +857,12 @@ PyArray_Descr npyrational_descr = {
     'V',                    /* kind */
     'r',                    /* type */
     '=',                    /* byteorder */
-    /* For now, we need NPY_NEEDS_PYAPI in order to make numpy detect our exceptions.  This isn't technically necessary,
-       since we're careful about thread safety, and hopefully future versions of numpy will recognize that. */
+    /*
+     * For now, we need NPY_NEEDS_PYAPI in order to make numpy detect our
+     * exceptions.  This isn't technically necessary,
+     * since we're careful about thread safety, and hopefully future
+     * versions of numpy will recognize that.
+     */
     NPY_NEEDS_PYAPI | NPY_USE_GETITEM | NPY_USE_SETITEM, /* hasobject */
     0,                      /* type_num */
     sizeof(rational),       /* elsize */

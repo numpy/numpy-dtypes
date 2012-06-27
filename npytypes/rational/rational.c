@@ -4,10 +4,8 @@
 
 #include <stdint.h>
 #include <math.h>
-//#include <Python/Python.h>
-//#include <Python/structmember.h>
-#include <Python.h>
-#include <structmember.h>
+#include <Python/Python.h>
+#include <Python/structmember.h>
 #include <numpy/arrayobject.h>
 #include <numpy/ufuncobject.h>
 
@@ -957,17 +955,17 @@ UNARY_UFUNC(denominator,int64_t,d(x))
 static NPY_INLINE void
 rational_matrix_multiply(char **args, npy_intp *dimensions, npy_intp *steps)
 {
-    // pointers to data for input and output arrays
+    /* pointers to data for input and output arrays */
     char *ip1 = args[0];
     char *ip2 = args[1];
     char *op = args[2];
 
-    // lengths of core dimensions
+    /* lengths of core dimensions */
     npy_intp dm = dimensions[0];
     npy_intp dn = dimensions[1];
     npy_intp dp = dimensions[2];
 
-    // striding over core dimensions
+    /* striding over core dimensions */
     npy_intp is1_m = steps[0];
     npy_intp is1_n = steps[1];
     npy_intp is2_n = steps[2];
@@ -975,21 +973,24 @@ rational_matrix_multiply(char **args, npy_intp *dimensions, npy_intp *steps)
     npy_intp os_m = steps[4];
     npy_intp os_p = steps[5];
 
-    // core dimensions counters
+    /* core dimensions counters */
     npy_intp m, n, p;
 
-    // calculate dot product for each row/column vector pair
+    /* calculate dot product for each row/column vector pair */
     for (m = 0; m < dm; m++) {
         for (p = 0; p < dp; p++) {
             npyrational_dot(ip1, is1_n, ip2, is2_n, op, dn, NULL);
 
+            /* advance to next column of 2nd input array and output array */
             ip2 += is2_p;
             op  +=  os_p;
         }
 
+        /* reset to first column of 2nd input array and output array */
         ip2 -= is2_p * p;
         op -= os_p * p;
 
+        /* advance to next row of 1st input array and output array */
         ip1 += is1_m;
         op += os_m;
     }
@@ -999,18 +1000,18 @@ rational_matrix_multiply(char **args, npy_intp *dimensions, npy_intp *steps)
 static void
 rational_gufunc_matrix_multiply(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
-    // outer dimensions counter
+    /* outer dimensions counter */
     npy_intp N_;
 
-    // length of flattened outer dimensions
+    /* length of flattened outer dimensions */
     npy_intp dN = dimensions[0];
 
-    // striding over flattened outer dimensions for input and output arrays
+    /* striding over flattened outer dimensions for input and output arrays */
     npy_intp s0 = steps[0];
     npy_intp s1 = steps[1];
     npy_intp s2 = steps[2];
 
-    // loop through outer dimensions, performing matrix multiply on core dimensions for each loop
+    /* loop through outer dimensions, performing matrix multiply on core dimensions for each loop */
     for (N_ = 0; N_ < dN; N_++, args[0] += s0, args[1] += s1, args[2] += s2) {
         rational_matrix_multiply(args, dimensions+1, steps+3);
     }

@@ -96,4 +96,24 @@ values based rational numbers from the input array.
 
         NEW_UNARY_UFUNC(numerator,NPY_INT64,"rational number numerator");
 
+    |
+
+An example of using the numerator ufunc with the Rational dtype::
+
+    In [1]: import numpy as np
+
+    In [2]: from rational import rational, numerator
+
+    In [3]: r1=rational(1,2)
+
+    In [4]: r2=rational(3,4)
+
+    In [5]: r3=rational(5,6)
+
+    In [6]: r4=rational(7,8)
+
+    In [7]: a=np.array([r1,r2,r3,r4], dtype=rational)
+
+    In [8]: numerator(a)
+    Out[8]: array([1, 3, 5, 7])
 

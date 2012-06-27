@@ -125,4 +125,26 @@ object representing the sum of those two rational numbers::
 
         REGISTER_UFUNC_BINARY_RATIONAL(add)
 
+    |
+
+An example of using the add ufunc with the Rational dtype::
+
+    In [1]: import numpy as np
+
+    In [2]: from rational import rational
+
+    In [3]: r1=rational(1,2)
+
+    In [4]: r2=rational(3,4)
+
+    In [5]: r3=rational(5,6)
+
+    In [6]: r4=rational(7,8)
+
+    In [7]: a=np.array([r1,r2], dtype=rational)
+
+    In [8]: b=np.array([r3,r4], dtype=rational)
+
+    In [9]: np.add(a,b)
+    Out[9]: array([4/3, 13/8], dtype=rational)
 

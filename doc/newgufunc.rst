@@ -102,4 +102,38 @@ vectors or matrices and performs a matrix multiply on each pair of matrix elemen
 
         PyModule_AddObject(m,"matrix_multiply",(PyObject*)gufunc);
 
+    |
+
+An example of using the add ufunc with the Rational dtype::
+
+    In [1]: import numpy as np
+
+    In [2]: from rational import rational, matrix_multiply
+
+    In [3]: r1=rational(1,2)
+
+    In [4]: r2=rational(3,4)
+
+    In [5]: r3=rational(5,6)
+
+    In [6]: r4=rational(7,8)
+
+    In [7]: a=np.array([[[[r1,r2],[r3,r4]],[[r1,r2],[r3,r4]]], [[[r1,r2],[r3,r4]],[[r1,r2],[r3,r4]]]], dtype=rational)
+
+    In [8]: b=np.array([[[[r3,r4],[r1,r2]],[[r3,r4],[r1,r2]]], [[[r3,r4],[r1,r2]],[[r3,r4],[r1,r2]]]], dtype=rational)
+
+    In [9]: matrix_multiply(a,b)
+    Out[9]: 
+    array([[[[19/24, 1],
+             [163/144, 133/96]],
+
+            [[19/24, 1],
+             [163/144, 133/96]]],
+
+
+           [[[19/24, 1],
+             [163/144, 133/96]],
+
+            [[19/24, 1],
+             [163/144, 133/96]]]], dtype=rational)
 

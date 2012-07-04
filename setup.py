@@ -3,7 +3,7 @@ import numpy as np
 
 ext_modules = []
 
-ext = Extension('npytypes.rational',
+ext = Extension('npytypes.rational.rational',
                 sources=['npytypes/rational/rational.c'],
                 include_dirs=[np.get_include()])
 ext_modules.append(ext)
@@ -20,6 +20,6 @@ setup(name='npytypes',
       description='NumPy type extensions',
       packages=['npytypes',
                 'npytypes.quaternion',
-                # 'npytypes.rational'
+                'npytypes.rational'
                 ],
       ext_modules=ext_modules)

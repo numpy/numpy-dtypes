@@ -974,7 +974,7 @@ rational_matrix_multiply(char **args, npy_intp *dimensions, npy_intp *steps)
     npy_intp os_p = steps[5];
 
     /* core dimensions counters */
-    npy_intp m, n, p;
+    npy_intp m, p;
 
     /* calculate dot product for each row/column vector pair */
     for (m = 0; m < dm; m++) {

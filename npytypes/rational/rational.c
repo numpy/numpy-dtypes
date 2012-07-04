@@ -1,11 +1,11 @@
 /* Fixed size rational numbers exposed to Python */
 
-#define NPY_NO_DEPRECATED_API
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 
 #include <stdint.h>
 #include <math.h>
-#include <Python/Python.h>
-#include <Python/structmember.h>
+#include <Python.h>
+#include <structmember.h>
 #include <numpy/arrayobject.h>
 #include <numpy/ufuncobject.h>
 

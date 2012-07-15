@@ -1,11 +1,11 @@
 /* Fixed size rational numbers exposed to Python */
 
-#define NPY_NO_DEPRECATED_API
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 
 #include <stdint.h>
 #include <math.h>
-#include <Python/Python.h>
-#include <Python/structmember.h>
+#include <Python.h>
+#include <structmember.h>
 #include <numpy/arrayobject.h>
 #include <numpy/ufuncobject.h>
 
@@ -974,7 +974,7 @@ rational_matrix_multiply(char **args, npy_intp *dimensions, npy_intp *steps)
     npy_intp os_p = steps[5];
 
     /* core dimensions counters */
-    npy_intp m, n, p;
+    npy_intp m, p;
 
     /* calculate dot product for each row/column vector pair */
     for (m = 0; m < dm; m++) {

@@ -1,7 +1,7 @@
 import numpy as np
 
-from .numpy_quaternion import quaternion
-from .info import __doc__
+from npytypes.quaternion.numpy_quaternion import quaternion
+from npytypes.quaternion.info import __doc__
 
 __all__ = ['quaternion']
 

@@ -34,10 +34,10 @@ extern "C" {
 #endif
 
 typedef struct {
-	double w;
-	double x;
-	double y;
-	double z;
+    double w;
+    double x;
+    double y;
+    double z;
 } quaternion;
 
 int quaternion_isnonzero(quaternion q);

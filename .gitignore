@@ -13,6 +13,9 @@
 .*.sw[nop]
 .sw[nop]
 *.tmp
+.cproject
+.pydevproject
+.tox
 
 # Compiled source #
 ###################

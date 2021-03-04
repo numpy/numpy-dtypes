@@ -505,6 +505,9 @@ static struct PyModuleDef moduledef = {
     NULL,
     NULL
 };
+#define INITERROR return NULL
+#else
+#define INITERROR return
 #endif
 
 #if defined(NPY_PY3K)
@@ -526,7 +529,7 @@ PyMODINIT_FUNC initnumpy_quaternion(void) {
 #endif
 
     if (!m) {
-        return NULL;
+        INITERROR;
     }
 
     /* Make sure NumPy is initialized */
@@ -548,7 +551,7 @@ PyMODINIT_FUNC initnumpy_quaternion(void) {
     if (PyType_Ready(&PyQuaternionArrType_Type) < 0) {
         PyErr_Print();
         PyErr_SetString(PyExc_SystemError, "could not initialize PyQuaternionArrType_Type");
-        return NULL;
+        INITERROR;
     }
 
     /* The array functions */
@@ -580,7 +583,7 @@ PyMODINIT_FUNC initnumpy_quaternion(void) {
     quaternionNum = PyArray_RegisterDataType(quaternion_descr);
 
     if (quaternionNum < 0)
-        return NULL;
+        INITERROR;
 
     register_cast_function(NPY_BOOL, quaternionNum, (PyArray_VectorUnaryFunc*)BOOL_to_quaternion);
     register_cast_function(NPY_BYTE, quaternionNum, (PyArray_VectorUnaryFunc*)BYTE_to_quaternion);
@@ -659,5 +662,7 @@ PyMODINIT_FUNC initnumpy_quaternion(void) {
 
     PyModule_AddObject(m, "quaternion", (PyObject *)&PyQuaternionArrType_Type);
 
+#if defined(NPY_PY3K)
     return m;
+#endif
 }

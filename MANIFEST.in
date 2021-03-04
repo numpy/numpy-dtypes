@@ -1,0 +1,13 @@
+include setup.py
+recursive-include npytypes *.py
+recursive-include npytypes/rational *.py *.h *.c
+recursive-include npytypes/quaternion *.py *.h *.c
+include MANIFEST.in
+include README.md
+include npytypes/quaternion/README
+include npytypes/rational/LICENSE
+include npytypes/rational/Makefile
+include npytypes/rational/README.md
+exclude tox.ini
+exclude doc
+recursive-exclude doc *

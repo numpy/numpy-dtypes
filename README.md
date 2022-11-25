@@ -5,7 +5,7 @@ NumPy has new-style DTypes with additional features and improved consistency.  A
 
 Because of this, no more improvements are expectd here and this repository is now archived.
 
-Examples for new style DTypes can be found in https://github.com/numpy/user-dtypes
+Examples for new style DTypes can be found in https://github.com/numpy/numpy-user-dtypes
 
 numpy-dtypes
 ============
